@@ -111,15 +111,19 @@ class CarLifeVideoBridge(
     init { main.post(bind); main.post(poll) }
 
     fun configure(codec: VideoCodec, bytes: ByteArray) {
-        disconnect()
+        val next = if (codec == VideoCodec.H264) runCatching {
+            H264BridgeFrames.config(bytes).also {
+                val actual = H264BridgeFrames.size(it)
+                require(actual[0] == width && actual[1] == height) { "SPS dimensions ${actual[0]}x${actual[1]} differ from $width x $height" }
+            }
+        }.onFailure { if (bytes.isNotEmpty()) report("CarLife video: config rejected ${it.message}; screen projection fallback") }.getOrNull() else null
+        // iPhone can repeat avcC after forceKeyFrame. Closing an unchanged route here
+        // would reopen it and request another keyframe, creating a recovery loop.
         synchronized(lock) {
-            config = if (codec == VideoCodec.H264) runCatching {
-                H264BridgeFrames.config(bytes).also {
-                    val actual = H264BridgeFrames.size(it)
-                    require(actual[0] == width && actual[1] == height) { "SPS dimensions ${actual[0]}x${actual[1]} differ from $width x $height" }
-                }
-            }.onFailure { report("CarLife video: config rejected ${it.message}; screen projection fallback") }.getOrNull() else null
+            if (next != null && config?.contentEquals(next) == true) return
         }
+        disconnect()
+        synchronized(lock) { config = next }
         if (codec != VideoCodec.H264) report("CarLife video: H.265 unsupported; reconnect with car target for H.264")
     }
     fun submit(bytes: ByteArray) {

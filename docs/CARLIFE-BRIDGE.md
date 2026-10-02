@@ -92,3 +92,13 @@ and an actual image on the HU. If USB accepts packets but the car decoder stays
 black, turn the video switch off to recover the original mirror. The phone
 preview/encoder and accessibility input remain; Android cursor overlay is absent
 on the direct car stream and pointer mapping still needs dedicated HID work.
+
+## carLife.3 stability update
+
+Use with CarProjection 0.4.2. Repeated identical AVC configuration preserves the
+video pipe instead of reopening/requesting another keyframe. PCM queue admission
+now waits for bounded receiver backpressure rather than dropping older samples.
+The receiver restores 300ms music prebuffer / 500ms capacity and keeps voice
+latency short. A 250ms stalled producer admission restores local audio playback.
+CarProjection exports source frame and overwrite counts and detects HU silence
+after learning the car's periodic status cadence. Both APKs must be updated.

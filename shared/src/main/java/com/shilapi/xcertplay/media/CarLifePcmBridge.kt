@@ -83,7 +83,7 @@ internal class CarLifePcmBridge(context: Context?, private val report: (String) 
             } catch (_: InterruptedException) { /* Renderer teardown. */ }
         }, "carlife-pcm-writer").apply { isDaemon = true; start() }
 
-        /** Called by the decoder worker. Never waits for the car's USB writer. */
+        /** Decoder worker only. Bounded backpressure preserves contiguous samples. */
         @Synchronized fun write(data: ByteArray, offset: Int, length: Int, sampleRate: Int, channelCount: Int): Boolean {
             if (closed || routeClosed) return false
             if (sampleRate !in 8000..48000 || channelCount !in 1..2) return false
@@ -125,9 +125,13 @@ internal class CarLifePcmBridge(context: Context?, private val report: (String) 
             // Small blocks bound the pending duration at 120ms and avoid a giant decoder burst.
             for (start in converted.indices step 3840) {
                 val block = converted.copyOfRange(start, minOf(start + 3840, converted.size))
-                if (!queue.offer(Block(target, block))) {
-                    queue.poll(); queue.offer(Block(target, block)); dropped++
-                    if (dropped == 1L || dropped % 100 == 0L) report("CarLife bridge: dropped oldest PCM blocks=$dropped")
+                // Keep sample order. The car's sample clock provides backpressure
+                // through its bounded mixer and pipe, as AudioTrack did locally.
+                val accepted = try { queue.offer(Block(target, block), 250, TimeUnit.MILLISECONDS) }
+                    catch (_: InterruptedException) { Thread.currentThread().interrupt(); false }
+                if (!accepted) {
+                    report("CarLife bridge: PCM consumer stalled; restoring local playback")
+                    disconnect(target); return false
                 }
             }
             return true
