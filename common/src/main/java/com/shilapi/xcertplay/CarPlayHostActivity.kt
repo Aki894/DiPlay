@@ -444,6 +444,7 @@ class CarPlayHostActivity : ComponentActivity() {
         carLifeDisplayBridge = com.shilapi.xcertplay.media.CarLifeVideoBridge(this,
             report = ::appendLog, onTargetChanged = { target ->
                 carLifeTarget = target
+                updateResolutionMenu()
                 val existing = controller
                 if (existing != null && !existing.hasActiveAirPlayAttachment()) {
                     restartCarPlay("CarLife display changed; applying car resolution")
@@ -2739,7 +2740,10 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun updateResolutionMenu() {
         resolutionValueView?.text = CarPlayDisplayScale.label(displayScaleTenths)
         val native = activeDisplaySize ?: currentActivitySize()
-        val resolution = if (native == null) {
+        val resolution = if (carLifeTarget != null) {
+            val car = carLifeTarget!!
+            "CarLife 车机画面：${car.width} x ${car.height}（重连后生效）"
+        } else if (native == null) {
             getString(R.string.handshake_resolution_waiting_for_display)
         } else {
             val negotiated = CarPlayDisplayScale.apply(
@@ -2754,7 +2758,7 @@ class CarPlayHostActivity : ComponentActivity() {
             "${getString(R.string.resolution_handshake_prefix)}${native.width} x ${native.height} -> " +
                 "${negotiated.widthPixels} x ${negotiated.heightPixels}"
         }
-        val transport = if (!hevcEnabled) {
+        val transport = if (carLifeTarget != null || !hevcEnabled) {
             "H.264"
         } else {
             "HEVC (H.265, ${if (hevcSoftwareDecoderEnabled) "software" else "hardware"})"

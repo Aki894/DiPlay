@@ -43,7 +43,7 @@ class CarLifeVideoBridge(
     private var waitingForKey = true
     private var lastRecovery = -1L
     private var recoverySequence = 0
-    private val connection = object : ServiceConnection {
+    private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             remote = service; main.removeCallbacks(poll); main.post(poll)
         }
@@ -55,7 +55,7 @@ class CarLifeVideoBridge(
         }
         override fun onNullBinding(name: ComponentName) = onBindingDied(name)
     }
-    private val bind = object : Runnable {
+    private val bind: Runnable = object : Runnable {
         override fun run() {
             if (closed || bound) return
             bound = runCatching { app.bindService(Intent().setComponent(ComponentName(
@@ -72,7 +72,7 @@ class CarLifeVideoBridge(
             reply.readException(); return read(reply)
         } finally { data.recycle(); reply.recycle() }
     }
-    private val poll = object : Runnable {
+    private val poll: Runnable = object : Runnable {
         override fun run() {
             if (closed) return
             val state = remote?.let { service -> runCatching {

@@ -54,10 +54,24 @@ public final class H264BridgeFrames {
         if (a[i+2] == 1) return 3;
         return i + 3 < a.length && a[i+2] == 0 && a[i+3] == 1 ? 4 : 0;
     }
-    public static boolean keyFrame(byte[] annex) {
-        for (byte[] nal : nalus(annex)) if ((nal[0] & 31) == 5) return true;
-        return false;
+    /** Validate frames without allocating a byte array for every NAL in the hot path. */
+    public static int types(byte[] annex) {
+        if (annex.length == 0 || annex.length > MAX_FRAME) throw new IllegalArgumentException("NAL size");
+        int start = 0, types = 0, count = 0;
+        while (start < annex.length) {
+            int prefix = prefix(annex, start);
+            if (prefix == 0 || start + prefix >= annex.length || ++count > 4096)
+                throw new IllegalArgumentException("Invalid Annex B frame");
+            int header = annex[start + prefix] & 255, type = header & 31;
+            if ((header & 128) != 0 || type == 0) throw new IllegalArgumentException("NAL header");
+            types |= 1 << type;
+            int end = start + prefix;
+            while (end < annex.length && prefix(annex, end) == 0) end++;
+            start = end;
+        }
+        return types;
     }
+    public static boolean keyFrame(byte[] annex) { return (types(annex) & (1 << 5)) != 0; }
     public static int[] size(byte[] annex) {
         boolean pps = false; int[] size = null;
         for (byte[] nal : nalus(annex)) {
