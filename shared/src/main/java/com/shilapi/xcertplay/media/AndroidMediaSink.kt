@@ -138,7 +138,7 @@ class AndroidMediaSink(
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
 ) : MediaSink {
     private val appContext = context?.applicationContext
-    private val carLifeBridge = CarLifePcmBridge(appContext, onAudioDiagnostic)
+    private val carLifeBridge = appContext?.let { CarLifePcmBridge(it, onAudioDiagnostic) }
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
@@ -308,7 +308,7 @@ class AndroidMediaSink(
         recoveryExecutor.shutdownNow()
         audioRenderers.values.forEach(AudioRenderer::close)
         audioRenderers.clear()
-        carLifeBridge.close()
+        carLifeBridge?.close()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)
         microphoneUplinks.values.forEach(MicrophoneUplink::close)
@@ -344,7 +344,7 @@ class AndroidMediaSink(
             navigationStreamType,
             mediaBufferMillis,
             onAudioDiagnostic,
-            carLifeBridge.route(if (AudioChannelMapper.map(
+            carLifeBridge?.route(if (AudioChannelMapper.map(
                 format.audioType, format.payloadType,
                 if (advancedAudioChannelMapping) AudioChannelMappingMode.AUTOMOTIVE_BUS
                 else AudioChannelMappingMode.MOBILE_COMPATIBLE,
@@ -724,7 +724,7 @@ private class AudioRenderer(
     private val navigationStreamType: Int,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
-    private val carLifeRoute: CarLifePcmBridge.Route,
+    private val carLifeRoute: CarLifePcmBridge.Route?,
 ) : Closeable {
     private var decodedSampleRate = format.sampleRate
     private var decodedChannels = format.channels
@@ -1197,7 +1197,7 @@ private class AudioRenderer(
     }
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
-        if (decodedPcm16 && carLifeRoute.write(data, offset, length, decodedSampleRate, decodedChannels)) {
+        if (decodedPcm16 && carLifeRoute?.write(data, offset, length, decodedSampleRate, decodedChannels) == true) {
             if (!bridgeActive) {
                 track?.let { runCatching { it.pause(); it.flush() } }
                 playbackStarted = false; prebufferBytes = 0
@@ -1355,7 +1355,7 @@ private class AudioRenderer(
 
     @Synchronized
     private fun release() {
-        carLifeRoute.close()
+        carLifeRoute?.close()
         abandonAudioFocus()
         val codec = codec
         this.codec = null
