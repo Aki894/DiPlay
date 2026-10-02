@@ -22,6 +22,12 @@ jobs:
         with:
           packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358
       - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare stable public test signing key
+        if: github.repository == 'Aki894/DiPlay'
+        run: |
+          curl --fail --location --retry 3 'https://raw.githubusercontent.com/Aki894/CarProjection/0760e3b4f5145178d315eaeb1413fc20dba90b78/keystore/carprojection-debug.keystore.b64' -o "$RUNNER_TEMP/bridge-debug.b64"
+          sed 's/\\n$//' "$RUNNER_TEMP/bridge-debug.b64" | base64 --decode > "$RUNNER_TEMP/bridge-debug.keystore"
+          echo "DIPLAY_DEBUG_KEYSTORE_PATH=$RUNNER_TEMP/bridge-debug.keystore" >> "$GITHUB_ENV"
       - name: Unit tests, lint and source-only debug build
         run: ./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :home:testDebugUnitTest :mobile:lintDebug :home:lintDebug :maphost:lintDebug :mobile:assembleDebug :home:assembleDebug :maphost:assembleDebug --stacktrace
       - name: Test reports
@@ -36,3 +42,24 @@ jobs:
             samples/home/build/reports/tests/
             samples/home/build/reports/lint-results-debug.html
             samples/maphost/build/reports/lint-results-debug.html
+      - name: Provision explicitly selected upstream preview authentication for car test
+        if: github.repository == 'Aki894/DiPlay' && github.event_name != 'pull_request'
+        run: |
+          curl --fail --location --retry 3 'https://github.com/shihabal3amri/DiPlay/releases/download/v0.2.9/DiPlay-0.2.9.apk' -o "$RUNNER_TEMP/DiPlay-upstream.apk"
+          python3 scripts/prepare_bridge_auth.py "$RUNNER_TEMP/DiPlay-upstream.apk" "$RUNNER_TEMP/diplay-runtime-assets"
+      - name: Build standalone CarLife bridge experiment
+        if: github.repository == 'Aki894/DiPlay' && github.event_name != 'pull_request'
+        env:
+          DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/diplay-runtime-assets
+        run: ./gradlew :mobile:assembleStandaloneDebug :mobile:lintDebug --stacktrace
+      - name: Upload standalone bridge APK
+        if: github.repository == 'Aki894/DiPlay' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiPlay-CarLife-bridge-apk
+          path: mobile/build/outputs/apk/debug/mobile-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary runtime material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/diplay-runtime-assets" "$RUNNER_TEMP/DiPlay-upstream.apk" "$RUNNER_TEMP/bridge-debug.b64" "$RUNNER_TEMP/bridge-debug.keystore"

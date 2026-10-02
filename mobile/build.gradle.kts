@@ -17,8 +17,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 28
         targetSdk = 37
-        versionCode = 28
-        versionName = "0.2.9"
+        versionCode = 29
+        versionName = "0.2.9-carLife.1"
 
     }
 
@@ -26,6 +26,14 @@ android {
     localAuthenticationAssets?.let { sourceSets.getByName("main").assets.srcDir(it) }
 
     signingConfigs {
+        providers.environmentVariable("DIPLAY_DEBUG_KEYSTORE_PATH").orNull?.let { path ->
+            getByName("debug") {
+                storeFile = file(path)
+                storePassword = "android"
+                keyAlias = "carprojectiondebug"
+                keyPassword = "android"
+            }
+        }
         create("release") {
             storeFile = file(
                 providers.environmentVariable("ANDROID_KEYSTORE_PATH")
@@ -41,6 +49,7 @@ android {
         debug {
             applicationIdSuffix = ".hudtest"
             versionNameSuffix = "-hud-test"
+            resValue("string", "app_name", "DiPlay CarLife (实验)")
         }
         release {
             optimization {

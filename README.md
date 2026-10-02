@@ -58,3 +58,9 @@ This repository starts with a clean public source snapshot. Local research, test
 ## Local release packaging
 
 The release APK intentionally contains the experimental accessory identity. The Git repository and source archive exclude all accessory and Android signing keys; tests generate synthetic identities at runtime. Source/CI builds omit runtime identity assets by default. Local release builds explicitly select an external asset directory. Publishing the APK makes its bundled identity extractable; building locally does not preserve that identity's confidentiality.
+
+## CarLife bridge experiment in this fork
+
+This fork adds direct decoded audio routing to CarProjection 0.4.0 on an Android
+phone connected to a wired CarLife head unit. Video/touch remain on the tested
+screen-projection path. See [installation, build and limitations](docs/CARLIFE-BRIDGE.md).

@@ -138,6 +138,7 @@ class AndroidMediaSink(
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
 ) : MediaSink {
     private val appContext = context?.applicationContext
+    private val carLifeBridge = CarLifePcmBridge(appContext, onAudioDiagnostic)
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
@@ -307,6 +308,7 @@ class AndroidMediaSink(
         recoveryExecutor.shutdownNow()
         audioRenderers.values.forEach(AudioRenderer::close)
         audioRenderers.clear()
+        carLifeBridge.close()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)
         microphoneUplinks.values.forEach(MicrophoneUplink::close)
@@ -342,6 +344,7 @@ class AndroidMediaSink(
             navigationStreamType,
             mediaBufferMillis,
             onAudioDiagnostic,
+            carLifeBridge.route(format.audioType),
         ).also { audioRenderers[id] = it }
     }
 }
@@ -717,7 +720,12 @@ private class AudioRenderer(
     private val navigationStreamType: Int,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
+    private val carLifeRoute: CarLifePcmBridge.Route,
 ) : Closeable {
+    private var decodedSampleRate = format.sampleRate
+    private var decodedChannels = format.channels
+    private var decodedPcm16 = true
+    private var bridgeActive = false
     private data class AudioPacket(val rtp: ByteArray, val sample: Int)
 
     private var trackAttributes: AudioAttributes? = null
@@ -756,7 +764,7 @@ private class AudioRenderer(
     private var statsWindowStartNs = 0L
     private var statsLastUnderruns = 0
     private var bytesPerSecond = 0
-    private val bufferProgress = AudioBufferProgress(if (format.channels >= 2) 4 else 2)
+    private var bufferProgress = AudioBufferProgress(if (format.channels >= 2) 4 else 2)
     private var underrunsAtPlaybackStart = 0
     private var lastPcmWriteNs = 0L
     private var rebufferCount = 0
@@ -1146,7 +1154,13 @@ private class AudioRenderer(
             val index = codec.dequeueOutputBuffer(info, 0)
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit
+                index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val actual = codec.outputFormat
+                    decodedSampleRate = actual.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    decodedChannels = actual.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    decodedPcm16 = !actual.containsKey(MediaFormat.KEY_PCM_ENCODING) ||
+                        actual.getInteger(MediaFormat.KEY_PCM_ENCODING) == AndroidAudioFormat.ENCODING_PCM_16BIT
+                }
                 index >= 0 -> {
                     val size = info.size
                     if (size > 0) {
@@ -1179,6 +1193,23 @@ private class AudioRenderer(
     }
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
+        if (decodedPcm16 && carLifeRoute.write(data, offset, length, decodedSampleRate, decodedChannels)) {
+            if (!bridgeActive) {
+                track?.let { runCatching { it.pause(); it.flush() } }
+                playbackStarted = false; prebufferBytes = 0
+                abandonAudioFocus()
+                report("CarLife bridge: local playback muted type=${format.audioType}")
+            }
+            bridgeActive = true
+            return
+        }
+        if (bridgeActive) {
+            bridgeActive = false
+            bufferProgress = AudioBufferProgress(frameBytes)
+            totalWrittenFrames = 0; lastPlaybackHeadFrames = null
+            requestAudioFocus()
+            report("CarLife bridge: local playback restored type=${format.audioType}")
+        }
         val track = track ?: return
         if (!firstPcmLogged && length > 0) {
             firstPcmLogged = true
@@ -1236,6 +1267,7 @@ private class AudioRenderer(
     }
 
     private fun maintainPlaybackBuffer() {
+        if (bridgeActive) return
         val track = track ?: return
         if (bufferProgress.shouldRebuffer(mappedChannel == AudioChannel.MEDIA, playbackStarted,
                 track.underrunCount > underrunsAtPlaybackStart, queue.isEmpty(), track.playbackHeadPosition)) {
@@ -1319,6 +1351,7 @@ private class AudioRenderer(
 
     @Synchronized
     private fun release() {
+        carLifeRoute.close()
         abandonAudioFocus()
         val codec = codec
         this.codec = null
