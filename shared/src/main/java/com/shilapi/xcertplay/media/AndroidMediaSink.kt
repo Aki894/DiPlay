@@ -344,7 +344,11 @@ class AndroidMediaSink(
             navigationStreamType,
             mediaBufferMillis,
             onAudioDiagnostic,
-            carLifeBridge.route(format.audioType),
+            carLifeBridge.route(if (AudioChannelMapper.map(
+                format.audioType, format.payloadType,
+                if (advancedAudioChannelMapping) AudioChannelMappingMode.AUTOMOTIVE_BUS
+                else AudioChannelMappingMode.MOBILE_COMPATIBLE,
+            ).channel == AudioChannel.MEDIA) "media" else format.audioType),
         ).also { audioRenderers[id] = it }
     }
 }

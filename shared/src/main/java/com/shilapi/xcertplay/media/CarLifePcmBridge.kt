@@ -24,7 +24,7 @@ internal class CarLifePcmBridge(context: Context?, private val report: (String) 
     @Volatile private var remote: IBinder? = null
     @Volatile private var closed = false
     private var bound = false
-    private val connection = object : ServiceConnection {
+    private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) { remote = service }
         override fun onServiceDisconnected(name: ComponentName) { remote = null; routes.forEach { it.disconnect() } }
         override fun onBindingDied(name: ComponentName) {
@@ -35,7 +35,7 @@ internal class CarLifePcmBridge(context: Context?, private val report: (String) 
         }
         override fun onNullBinding(name: ComponentName) { onBindingDied(name) }
     }
-    private val bind = object : Runnable {
+    private val bind: Runnable = object : Runnable {
         override fun run() {
             if (closed || bound || app == null) return
             bound = runCatching {
