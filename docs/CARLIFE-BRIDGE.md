@@ -10,7 +10,7 @@ direct HID, a car microphone uplink, or transport ownership outside the Activity
 ## Installation and test
 
 1. Update CarProjection to 0.4.0. Keep its existing projection/accessibility permissions.
-2. Install the Actions artifact `DiPlay-CarLife-bridge-apk`. Its debug application ID is
+2. From the paired [CarProjection Actions build](https://github.com/Aki894/CarProjection/actions), install the artifact `DiPlay-CarLife-bridge-apk`. Its debug application ID is
    `com.shihab.diplay.hudtest`; it coexists with upstream `com.shihab.diplay`.
    The app label is **DiPlay CarLife (实验)**. Keep the original app installed;
    its settings and pairings are not shared with the bridge variant.
@@ -37,6 +37,8 @@ the same authority. This is a local experimental integration.
 
 Each side bounds pending decoded audio to six 20ms blocks/120ms per stream;
 the receiver accepts at most six streams and drops the oldest samples on overflow.
+Music starts with a 40ms prebuffer. Incomplete decoder frames wait up to 60ms
+for the next chunk (or EOF) rather than padding every AAC tail into an extra block.
 Music is attenuated to 25% while a non-media stream has audible PCM; streams are
 summed with saturation, then downmixed/resampled through the existing TTS converter.
 CarProjection's selected TTS rate (default 48k mono) and output gain still apply.
