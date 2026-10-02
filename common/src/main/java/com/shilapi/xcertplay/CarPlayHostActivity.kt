@@ -257,6 +257,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private var statusView: TextView? = null
     private var statusScrollView: ScrollView? = null
     private var stageStatusView: TextView? = null
+    private var carLifeDisplayBridge: com.shilapi.xcertplay.media.CarLifeVideoBridge? = null
+    private var carLifeTarget: com.shilapi.xcertplay.media.CarLifeVideoBridge.Target? = null
     private var resolutionValueView: TextView? = null
     private var resolutionPreviewView: TextView? = null
     private var hotspotStatusView: TextView? = null
@@ -439,6 +441,17 @@ class CarPlayHostActivity : ComponentActivity() {
             resources.getBoolean(R.bool.config_advanced_audio_channel_mapping)
         airPlayIdentity = AirPlayPersistence.loadIdentity(this)
         loadPersistedSettings()
+        carLifeDisplayBridge = com.shilapi.xcertplay.media.CarLifeVideoBridge(this,
+            report = ::appendLog, onTargetChanged = { target ->
+                carLifeTarget = target
+                val existing = controller
+                if (existing != null && !existing.hasActiveAirPlayAttachment()) {
+                    restartCarPlay("CarLife display changed; applying car resolution")
+                } else if (existing != null) {
+                    appendLog("CarLife display changed; reconnect CarPlay to apply car resolution")
+                    android.widget.Toast.makeText(this, "车机尺寸已更新，请重连 CarPlay 以匹配画面", android.widget.Toast.LENGTH_LONG).show()
+                }
+            })
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
         applyFullscreenMode()
@@ -852,6 +865,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        carLifeDisplayBridge?.close(); carLifeDisplayBridge = null
         clusterMonitor?.stop()
         mainHandler.removeCallbacks(hideIdleCenterMap)
         homeMonitor?.stop()
@@ -2827,19 +2841,21 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun createAirPlayConfig(size: DisplaySize): AirPlayConfig {
+        val carTarget = carLifeTarget
         val physical = resolvePhysicalSize(size)
         val baseDisplay = AirPlayDisplayConfig(
-            widthPixels = size.width,
-            heightPixels = size.height,
-            widthPhysicalMm = physical.widthMm,
-            heightPhysicalMm = physical.heightMm,
-            fps = fps,
+            widthPixels = carTarget?.width ?: size.width,
+            heightPixels = carTarget?.height ?: size.height,
+            widthPhysicalMm = if (carTarget == null) physical.widthMm else null,
+            heightPhysicalMm = if (carTarget == null) physical.heightMm else null,
+            fps = carTarget?.fps ?: fps,
         )
-        val resolutionDisplay = CarPlayDisplayScale.apply(baseDisplay, displayScaleTenths)
+        val resolutionDisplay = if (carTarget == null) CarPlayDisplayScale.apply(baseDisplay, displayScaleTenths) else baseDisplay
         val requestedPercent = uiScalePercent
-        var scaledDisplay = CarPlayUiScale.apply(resolutionDisplay, uiScalePercent)
+        var scaledDisplay = if (carTarget == null) CarPlayUiScale.apply(resolutionDisplay, uiScalePercent) else baseDisplay
         val candidate = scaledDisplay
         val support = when {
+            carTarget != null -> CanvasSupport(true, "carlife_target", "Using negotiated CarLife car display without canvas scaling")
             uiScalePercent >= CarPlayUiScale.DEFAULT -> CanvasSupport(true, "not_enlarging", "Decoder capability enlargement check not required")
             scaledDisplay === resolutionDisplay -> CanvasSupport(false, "canvas_4k_limit", "Decoder capability check skipped: canvas exceeds enlargement limit")
             else -> largerCanvasSupport(scaledDisplay)
@@ -2857,15 +2873,16 @@ class CarPlayHostActivity : ComponentActivity() {
         }
         appendLog("CarPlay size=${CarPlayUiScale.label(uiScalePercent)} canvas=${scaledDisplay.widthPixels}x${scaledDisplay.heightPixels}")
         val display = scaledDisplay.copy(
-            safeArea = AirPlaySafeArea.toInsets(
+            safeArea = if (carTarget != null) com.shilapi.xcertplay.airplay.AirPlayInsets() else AirPlaySafeArea.toInsets(
                 mapping = AirPlayPersistence.loadSafeAreaRect(this, size.width, size.height),
                 activityWidthPixels = size.width,
                 activityHeightPixels = size.height,
                 displayWidthPixels = scaledDisplay.widthPixels,
                 displayHeightPixels = scaledDisplay.heightPixels,
             ),
-            safeAreaDrawOutside = safeAreaDrawOutside,
+            safeAreaDrawOutside = if (carTarget != null) false else safeAreaDrawOutside,
         )
+        if (carTarget != null) appendLog("CarLife video: advertised car canvas=${display.widthPixels}x${display.heightPixels} H.264 fps=${display.fps}")
         val requestSummary = "Display request selected=${CarPlayUiScale.label(requestedPercent)} percent=$requestedPercent " +
             "surface=${size.width}x${size.height} resolution=${displayScaleTenths * 10}% " +
             "base=${resolutionDisplay.widthPixels}x${resolutionDisplay.heightPixels} " +
@@ -2887,7 +2904,7 @@ class CarPlayHostActivity : ComponentActivity() {
             main = display,
             cluster = clusterDisplayConfig(),
             rightHandDrive = rightHandDrive,
-            hevc = hevcEnabled,
+            hevc = carTarget == null && hevcEnabled,
             microphone = microphoneAvailable,
             manufacturer = normalizedManufacturer(),
             model = normalizedModel(),

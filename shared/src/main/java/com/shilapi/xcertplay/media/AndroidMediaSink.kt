@@ -139,6 +139,8 @@ class AndroidMediaSink(
 ) : MediaSink {
     private val appContext = context?.applicationContext
     private val carLifeBridge = appContext?.let { CarLifePcmBridge(it, onAudioDiagnostic) }
+    private val carLifeVideo = appContext?.let { CarLifeVideoBridge(it, videoWidth, videoHeight,
+        report = onAudioDiagnostic, requestKeyFrame = { requestVideoRecovery(110) }) }
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
@@ -231,12 +233,14 @@ class AndroidMediaSink(
 
     override fun onVideoConfig(type: Int, codecData: ByteArray) {
         val codec = pendingVideoCodec[type] ?: VideoCodec.H264
+        if (type == 110) carLifeVideo?.configure(codec, codecData)
         lastVideoConfig[type] = codec to codecData
         videoDecoder(type).configure(codec, codecData)
         mirrorDecoders(type).forEach { it.configure(codec, codecData) }
     }
 
     override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
+        if (type == 110) carLifeVideo?.submit(naluBytes)
         videoDecoder(type).submit(naluBytes)
         mirrorDecoders(type).forEach { it.submit(naluBytes) }
     }
@@ -249,6 +253,7 @@ class AndroidMediaSink(
             synchronized(mirrorLock) {
                 mirrorDecoders.keys.filter { it.first == type }.forEach { mirrorDecoders.remove(it)?.close() }
             }
+            if (type == 110) carLifeVideo?.configure(VideoCodec.H264, ByteArray(0))
             lastVideoConfig.remove(type)
             pendingVideoCodec.remove(type)
         }
@@ -308,6 +313,7 @@ class AndroidMediaSink(
         recoveryExecutor.shutdownNow()
         audioRenderers.values.forEach(AudioRenderer::close)
         audioRenderers.clear()
+        carLifeVideo?.close()
         carLifeBridge?.close()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
         if (hadMedia) onMediaAudioChanged(false)

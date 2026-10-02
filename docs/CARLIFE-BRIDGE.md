@@ -76,3 +76,19 @@ CarPlay H.264 configuration against HU-negotiated dimensions/profile/framing, th
 implement direct video with a screen-capture fallback. Direct touch/HID comes after
 coordinate and gesture semantics are verified. Independent reconnect state machines
 and service-owned USB transport follow; they are not included in this first bridge.
+
+## Direct video experiment (CarProjection 0.4.1 / DiPlay carLife.2)
+
+Connect CarProjection to the car, enable its direct video switch, then connect
+iPhone in DiPlay CarLife. The car target replaces the phone's advertised canvas
+and selects H.264, full safe area and the selected car FPS for the next session.
+Reconnection is required if the current session was established before discovery.
+Source preferences are not overwritten. Only the main screen is sent through a
+local framed pipe; SPS dimensions must match the negotiated car canvas.
+
+Both audio and video remain independently selectable. Video confirmation is
+`[BRIDGE] video direct active=WxH H.264` plus growing `video USB sent` counters
+and an actual image on the HU. If USB accepts packets but the car decoder stays
+black, turn the video switch off to recover the original mirror. The phone
+preview/encoder and accessibility input remain; Android cursor overlay is absent
+on the direct car stream and pointer mapping still needs dedicated HID work.
