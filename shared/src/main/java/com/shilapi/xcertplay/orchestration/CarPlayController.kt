@@ -397,6 +397,32 @@ class CarPlayController(
         }
     }
 
+    private val carLifeInputBusy = AtomicBoolean(false)
+    private val carLifeInput = com.shilapi.xcertplay.media.CarLifeInputBridge(appContext,
+        available = { !closed && activeSession != null }, canPoll = { !carLifeInputBusy.get() },
+        dispatch = { events ->
+            val session = activeSession
+            if (session != null && !closed && carLifeInputBusy.compareAndSet(false, true)) {
+                try { touchExecutor.execute {
+                    try {
+                        if (closed || activeSession !== session) return@execute
+                        for (event in events) when (event[0]) {
+                            1 -> session.sendKnob(com.shilapi.xcertplay.airplay.AirPlayKnobState(
+                                select = event[1] and 1 != 0, home = event[1] and 2 != 0,
+                                back = event[1] and 4 != 0, x = event[2], y = event[3]))
+                            2 -> if (event[1] in 0..2) session.sendTouch(listOf(AirPlayContact(0,
+                                (event[2].toDouble() / airPlayConfig.main.widthPixels).coerceIn(0.0, 1.0),
+                                (event[3].toDouble() / airPlayConfig.main.heightPixels).coerceIn(0.0, 1.0),
+                                event[1] != 1)))
+                            3 -> session.sendMedia(event[1])
+                            4 -> { session.sendTouch(emptyList()); session.sendKnob(com.shilapi.xcertplay.airplay.AirPlayKnobState(), false) }
+                            5 -> session.sendKnob(com.shilapi.xcertplay.airplay.AirPlayKnobState(wheel = event[1]))
+                        }
+                    } finally { carLifeInputBusy.set(false) }
+                } } catch (_: Exception) { carLifeInputBusy.set(false) }
+            }
+        })
+
     /** Sends one CarPlay media-button press (an [com.shilapi.xcertplay.airplay.AirPlayHid] media index). */
     /** Opens Siri on the iPhone, as the car's voice button does in CarPlay. */
     fun requestSiri(): Boolean {
@@ -428,6 +454,7 @@ class CarPlayController(
         }
         videoGate?.close()
         BydNavigationOutputs.endNow()
+        carLifeInput.close()
         com.shilapi.xcertplay.glance.CarPlayGlance.setConnected(false)
         BydNavigationOutputs.clearClusterStreamControl(::applyClusterUi)
         closeReceivers()

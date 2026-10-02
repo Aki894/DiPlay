@@ -102,3 +102,6 @@ The receiver restores 300ms music prebuffer / 500ms capacity and keeps voice
 latency short. A 250ms stalled producer admission restores local audio playback.
 CarProjection exports source frame and overwrite counts and detects HU silence
 after learning the car's periodic status cadence. Both APKs must be updated.
+# Native input (carLife.4 / CarProjection 0.5.0)
+
+CarPlayController owns a leased native input bridge independently of its Activity. It receives bounded Binder batches of focus/knob buttons, wheel scrolling, media buttons and normalized touchscreen contacts. Enable CarProjection direct control, video and audio before reconnecting USB. Direct control uses CarPlay focus highlighting; second-tap sliding sends native wheel commands. With direct video this route needs no Android screen capture or Accessibility. Native wheel/focus behavior requires physical testing.
