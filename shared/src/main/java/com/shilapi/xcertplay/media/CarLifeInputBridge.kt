@@ -24,7 +24,7 @@ class CarLifeInputBridge(context: Context, private val available: () -> Boolean,
     private var bound = false
     private var reportedInput = false
     private var lastErrorAt = 0L
-    private val connection = object : ServiceConnection {
+    private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) { remote = service }
         override fun onServiceDisconnected(name: ComponentName) { remote = null }
         override fun onBindingDied(name: ComponentName) {
@@ -34,7 +34,7 @@ class CarLifeInputBridge(context: Context, private val available: () -> Boolean,
         }
         override fun onNullBinding(name: ComponentName) = onBindingDied(name)
     }
-    private val bind = object : Runnable {
+    private val bind: Runnable = object : Runnable {
         override fun run() {
             if (closed || bound) return
             bound = runCatching { app.bindService(Intent().setComponent(ComponentName(
