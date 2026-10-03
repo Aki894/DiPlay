@@ -5,6 +5,28 @@ import org.junit.Test
 import java.nio.file.Files
 
 class DiagnosticRedactorTest {
+    @Test fun boundedMicrophoneStartFailureAndCaptureCountersSurviveRedaction() {
+        val lines = listOf(
+            "Microphone: start type=telephony source=VOICE_COMMUNICATION codec=OPUS rate=48000 channels=1 frameMs=20 routedDeviceType=15",
+            "Microphone: failure type=speechrecognition source=VOICE_RECOGNITION codec=LPCM rate=16000 channels=1 frameMs=20 stage=READ error=none code=-3",
+            "Microphone: stats type=telephony source=VOICE_COMMUNICATION codec=OPUS rate=48000 channels=1 frameMs=20 routedDeviceType=15 captureBytes=1920 reads=2 zeroReads=1 readErrors=0 readMaxMs=30 encodedFrames=1 emptyEncodedFrames=1 udpSent=2 sendErrors=1 sendGapMaxMs=30 ended=false",
+        )
+        for (line in lines) assertEquals(line, DiagnosticRedactor.redact(line))
+        assertNull(DiagnosticRedactor.redact("Microphone: payload=private-audio"))
+        assertFalse(DiagnosticRedactor.redact("Microphone: failure peer=192.168.49.1")!!.contains("192.168.49.1"))
+    }
+
+    @Test fun connectionTimingAndCachedServiceMetadataSurviveWithoutPersonalIdentifiers() {
+        val lines = listOf(
+            "CONNECTION_DIAGNOSTIC attempt=2 phase=CONTROL wired io final readCalls=105 writeCalls=50 readTimeouts=3 ends=0 failures=1 maxReadMs=909 maxWriteMs=1937",
+            "CONNECTION_DIAGNOSTIC attempt=2 phase=WIRELESS Bluetooth snapshot point=after-failure enabled=true bondState=12 cachedServiceCount=5 cachedIap2Service=false",
+            "CONNECTION_DIAGNOSTIC generation=2 restart teardownWaitCompleted=false elapsedMs=4000",
+            "CONNECTION_DIAGNOSTIC attempt=2 phase=USB_DISCOVERY USB configuration ready=true configurationId=6 reenumerationAttempts=0 action=reuse-descriptors",
+        )
+        for (line in lines) assertEquals(line, DiagnosticRedactor.redact(line))
+        assertNull(DiagnosticRedactor.redact("CONNECTION_DIAGNOSTIC attempt=2 payload=private-data"))
+        assertFalse(DiagnosticRedactor.redact("CONNECTION_DIAGNOSTIC attempt=2 peer=192.168.49.1 id=0123456789abcdef0123456789abcdef")!!.contains("192.168.49.1"))
+    }
     @Test fun savedDriveReportKeepsMediaPerformanceCounters() {
         val folder = Files.createTempDirectory("diplay-media-report").toFile()
         try {
@@ -74,5 +96,21 @@ class DiagnosticRedactorTest {
         )
         for (line in lines) assertNotNull(line, DiagnosticRedactor.redact(line))
         assertFalse(DiagnosticRedactor.redact(lines.last())!!.contains("192.168.49.1"))
+    }
+
+    @Test fun startupAndAirPlayMilestonesSurviveExportWithoutWeakeningPayloadFilters() {
+        val lines = listOf(
+            "wireless startup elapsedMs=10000 authenticated=true wifiConfigs=2 startRequests=1 tcpAccepted=0 sessionActive=false waitingFor=WiFi_discovery_or_AirPlay_TCP",
+            "interfaceState=up multicast=true ipv4Usable=1 ipv6LinkLocal=1 ipv6Scoped=1",
+            "p2pGroup=present owner=true sameGroup=true reportedP2pClients=0 association=unknown legacyClients=not_exposed",
+            "bonjourAdded=0 bonjourResolved=0 bonjourAddressMismatch=0 connectProbes=0 connectProbe2xx=0 lastProbe=not_started",
+            "control probe stage=REQUEST_SENT attempt=1 family=IPv6",
+            "airplay TCP accepted family=IPv6",
+            "airplay control request method=POST route=pair-verify contentBytes=128",
+            "airplay control response status=200 contentBytes=32",
+            "iap2 availability wired=unknown wireless=true themeAssets=unknown",
+        )
+        for (line in lines) assertEquals(line, line, DiagnosticRedactor.redact(line))
+        assertNull(DiagnosticRedactor.redact("airplay rx POST /pair-verify body=secret"))
     }
 }

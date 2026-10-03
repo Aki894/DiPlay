@@ -69,6 +69,30 @@ class WifiP2pGroupManager(
     @Volatile private var observedCreatedName: String? = null
     @Volatile private var requestedName: String? = null
 
+    override fun connectionDiagnosticSnapshot(): String {
+        val current = synchronized(stateLock) { if (closed) null else channel }
+            ?: return "p2pGroup=unavailable association=unknown"
+        val result = AtomicReference<WifiP2pGroup?>()
+        val latch = CountDownLatch(1)
+        return try {
+            p2pManager.requestGroupInfo(current) { result.set(it); latch.countDown() }
+            if (!latch.await(500, TimeUnit.MILLISECONDS)) {
+                "p2pGroup=callback_timeout association=unknown"
+            } else {
+                val group = result.get()
+                if (group == null) "p2pGroup=absent association=unknown"
+                else "p2pGroup=present owner=${group.isGroupOwner} " +
+                    "sameGroup=${group.networkName == observedCreatedName} " +
+                    "reportedP2pClients=${group.clientList.size} association=unknown legacyClients=not_exposed"
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            "p2pGroup=interrupted association=unknown"
+        } catch (error: RuntimeException) {
+            "p2pGroup=unavailable failureClass=${error.javaClass.simpleName} association=unknown"
+        }
+    }
+
     override fun start(timeoutMillis: Long): WirelessHotspotInfo {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw IOException("Wi-Fi P2P credentials require Android 10 (API 29) or newer")
@@ -559,6 +583,15 @@ class WifiP2pGroupManager(
             WifiP2pGroup.SECURITY_TYPE_WPA3_COMPATIBILITY ->
                 Iap2WirelessSecurity.WPA3_TRANSITION
             WifiP2pGroup.SECURITY_TYPE_WPA3_SAE -> Iap2WirelessSecurity.WPA3_ONLY
+            // Several vendor supplicants report an authentication key management the framework
+            // cannot classify, which surfaces as UNKNOWN rather than as a concrete cipher suite.
+            // The group itself is still the plain WPA2-PSK group this device creates by default,
+            // so keep the assumption every older Android release relies on instead of aborting a
+            // bring-up that has already resolved its SSID, band, interface and host address.
+            WifiP2pGroup.SECURITY_TYPE_UNKNOWN -> {
+                diagnostic("Wi-Fi P2P security type not reported by the framework; assuming WPA2-PSK")
+                Iap2WirelessSecurity.WPA_WPA2
+            }
             else -> throw IOException(
                 "Unsupported Wi-Fi P2P security type: ${group.securityType}",
             )
