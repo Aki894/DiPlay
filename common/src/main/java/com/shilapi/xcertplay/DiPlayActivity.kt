@@ -621,8 +621,6 @@ class DiPlayActivity : ComponentActivity() {
         dialog.show()
     }
 
-    private fun hasPreciseLocation() =
-        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun reconnectForVehicleSetting() {
         if (CarPlayBackgroundSession.hasSession()) connect(AirPlayPersistence.loadWirelessEnabled(this))

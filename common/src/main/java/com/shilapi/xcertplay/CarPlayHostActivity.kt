@@ -598,8 +598,6 @@ class CarPlayHostActivity : ComponentActivity() {
         logThemeState(ThemeModeDiagnostics.Source.START, resources.configuration)
         mainHandler.removeCallbacks(pollConfiguration)
         mainHandler.post(pollConfiguration)
-        homeMonitor?.stop()
-        homeScreenVisible = null
     }
 
     override fun onResume() {

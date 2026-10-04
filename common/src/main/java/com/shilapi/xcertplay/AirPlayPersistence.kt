@@ -159,7 +159,7 @@ object AirPlayPersistence {
 
     fun loadNavigationAudioChannel(context: Context): Int {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // Inherit the legacy value only when the new key is absent; preserve fresh-install and explicit 0 defaults.
+        return prefs.getInt(KEY_NAVIGATION_AUDIO_CHANNEL, 0)
             .takeIf { it in AUDIO_CHANNELS } ?: 0
     }
 
