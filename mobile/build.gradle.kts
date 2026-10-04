@@ -17,8 +17,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 28
         targetSdk = 37
-        versionCode = 33
-        versionName = "0.2.10-carLife.5"
+        versionCode = 34
+        versionName = "0.2.11-carLife.6"
 
     }
 

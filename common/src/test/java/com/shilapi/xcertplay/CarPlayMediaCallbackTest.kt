@@ -35,7 +35,7 @@ class CarPlayMediaCallbackTest {
     fun hardwarePlayAndPauseKeysToggle() {
         press(KeyEvent.KEYCODE_MEDIA_PLAY)
         press(KeyEvent.KEYCODE_MEDIA_PAUSE)
-        press(CarPlayMediaButton.KEYCODE_BYD_AUTO_MEDIA_PLAY_PAUSE)
+        press(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
 
         assertEquals(List(3) { CarPlayMediaButton.PLAY_PAUSE }, sent)
     }
@@ -80,4 +80,14 @@ class CarPlayMediaCallbackTest {
     }
 
     private fun button(event: KeyEvent) = Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, event)
+
+    @Test
+    fun positionAndPlayStateDoNotRepublishMetadata() {
+        val song = CarPlayNowPlaying(title = "Song", artist = "Artist", artworkTransferId = 7, elapsedMillis = 1_000, playing = true)
+        assertEquals(false, CarPlayMediaKeys.metadataChanged(song, song.copy(elapsedMillis = 1_450)))
+        assertEquals(false, CarPlayMediaKeys.metadataChanged(song, song.copy(playing = false)))
+        assertEquals(true, CarPlayMediaKeys.metadataChanged(song, song.copy(title = "Next")))
+        assertEquals(true, CarPlayMediaKeys.metadataChanged(song, song.copy(artworkTransferId = 8)))
+        assertEquals(true, CarPlayMediaKeys.metadataChanged(CarPlayNowPlaying(), song))
+    }
 }
