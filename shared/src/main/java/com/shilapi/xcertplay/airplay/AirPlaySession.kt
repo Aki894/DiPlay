@@ -73,10 +73,6 @@ class AirPlaySession(
     internal var deviceBtMac = ""
     internal val activeStreams = linkedSetOf<Int>()
 
-    /** Counts the iPhone's cluster stream setups; 0 while no cluster stream is up. */
-    @Volatile var clusterStream = 0
-        private set
-    private var clusterStreamSetups = 0
 
     private val closed = AtomicBoolean(false)
     private val notified = AtomicBoolean(false)
@@ -101,7 +97,14 @@ class AirPlaySession(
     val controllerId: String? get() = pairVerify.verifiedControllerId
     val sharedSecret: ByteArray? get() = pairVerify.shared?.copyOf()
     val videoInCar: Boolean get() = config.videoInCar
-    @Volatile private var videoPlaybackEnabled = false
+    private val videoPlaybackAvailability = VideoPlaybackAvailability { allowed ->
+        sendCommand(
+            linkedMapOf(
+                "type" to "setVideoPlaybackAllowed",
+                "params" to linkedMapOf("videoPlaybackAllowed" to allowed),
+            ),
+        )
+    }
 
     fun syncedNtp(): BigInteger = ntp.syncedNtp()
 
@@ -132,19 +135,6 @@ class AirPlaySession(
         if (notified.compareAndSet(false, true)) listener.onSessionEnded(this)
     }
 
-    /**
-     * Asks the iPhone to draw CarPlay's cluster UI on the alt screen (showUI with the display's URL,
-     * then a keyframe) or to stop drawing it (stopUI). The stream stays up either way; CarKit handles
-     * both as car-initiated commands for a screen UUID.
-     */
-    fun setClusterUiShown(shown: Boolean): Boolean {
-        val uuid = AirPlayInfoPlist.ALT_UUID
-        if (!shown) return sendCommand(mapOf("type" to "stopUI", "params" to mapOf("uuid" to uuid)))
-        val url = config.cluster?.initialUrl ?: return false
-        return sendCommand(mapOf("type" to "showUI", "params" to mapOf("uuid" to uuid, "url" to url))) &&
-            sendCommand(mapOf("type" to "forceKeyFrame", "params" to mapOf("uuid" to uuid)))
-    }
-
     fun sendCommand(command: Map<String, Any?>): Boolean = synchronized(eventWriteLock) {
         sendCommandLocked(command)
     }
@@ -161,12 +151,11 @@ class AirPlaySession(
     }
 
     /**
-     * Video in car: tells the iPhone whether video may play now; otherwise it plays audio only. Sent only
-     * when SETUP enabled video, so an iPhone without it never gets the command.
+     * Video in car: retains whether video may play now and sends the latest value once SETUP has
+     * enabled video and the event channel is ready. An iPhone without the feature gets no command.
      */
-    fun setVideoPlaybackAllowed(allowed: Boolean): Boolean = videoPlaybackEnabled && sendCommand(
-        linkedMapOf("type" to "setVideoPlaybackAllowed", "params" to linkedMapOf("videoPlaybackAllowed" to allowed)),
-    )
+    internal fun setVideoPlaybackAllowed(allowed: Boolean): VideoPlaybackDelivery =
+        videoPlaybackAvailability.setDesired(allowed)
 
     private fun sendCommandLocked(command: Map<String, Any?>, extraHeaders: String = ""): Boolean {
         val socket = eventSocket ?: return false
@@ -422,6 +411,10 @@ class AirPlaySession(
                         "audioFormats=${(info["audioFormats"] as? List<*>)?.size ?: 0} " +
                         "audioLatencies=${(info["audioLatencies"] as? List<*>)?.size ?: 0}",
                 )
+                debugLog(
+                    "airplay /info videoInCar=${config.videoInCar} " +
+                        "videoPlaybackAllowed=${if (config.videoInCar) VideoInCar.allowed else "not-offered"}",
+                )
                 debugLog("airplay /info displays=${info["displays"]}")
                 RtspMessage.Response(
                     headers = mapOf("Content-Type" to PLIST_CONTENT_TYPE),
@@ -506,7 +499,9 @@ class AirPlaySession(
             response["keepAlivePort"] = openKeepAlive()
         }
         val features = setupEnabledFeatures(config, dict["features"] as? List<*>)
-        videoPlaybackEnabled = VideoInCar.FEATURE in features
+        val videoPlaybackEnabled = VideoInCar.FEATURE in features
+        val videoDelivery = videoPlaybackAvailability.setFeatureEnabled(videoPlaybackEnabled)
+        debugLog("airplay video playback negotiated=$videoPlaybackEnabled availability=$videoDelivery")
         response["enabledFeatures"] = features
         return RtspMessage.Response(
             headers = mapOf("Content-Type" to PLIST_CONTENT_TYPE),
@@ -526,7 +521,6 @@ class AirPlaySession(
                     debugLog("airplay screen stream type=$type dataPort=${port ?: "rejected"}")
                     if (port != null) {
                         activeStreams.add(type)
-                        if (type == STREAM_TYPE_ALT_SCREEN) clusterStream = ++clusterStreamSetups
                         result.add(linkedMapOf("type" to type, "dataPort" to port))
                     }
                 }
@@ -604,7 +598,6 @@ class AirPlaySession(
         } else {
             types.forEach { type -> if (activeStreams.remove(type)) media.onTeardown(this, type) }
         }
-        if (STREAM_TYPE_ALT_SCREEN !in activeStreams) clusterStream = 0
         return RtspMessage.Response(status = 200)
     }
 
@@ -645,6 +638,8 @@ class AirPlaySession(
     }
 
     private fun teardown() {
+        videoPlaybackAvailability.setEventReady(false)
+        videoPlaybackAvailability.setFeatureEnabled(false)
         ntp.close()
         safeClose(keepAliveSocket)
         keepAliveSocket = null
@@ -688,6 +683,8 @@ class AirPlaySession(
             synchronized(eventWriteLock) {
                 sendPendingNightModeLocked()
             }
+            val videoDelivery = videoPlaybackAvailability.setEventReady(true)
+            debugLog("airplay video event ready availability=$videoDelivery")
             runEventRead(socket)
         } catch (error: Exception) {
             if (!closed.get()) {
@@ -740,6 +737,7 @@ class AirPlaySession(
             if (!closed.get()) Log.e(TAG, "airplay event read failed", error)
         } finally {
             debugLog("airplay event connection closed")
+            videoPlaybackAvailability.setEventReady(false)
             if (eventSocket === socket) eventSocket = null
             eventCipher = null
             safeClose(socket)
@@ -778,7 +776,6 @@ internal fun setupEnabledFeatures(config: AirPlayConfig, proposed: List<*>?): Li
     if (config.hevc) features.add("hevc")
     features.add("iAPChannel")
     features.add("viewAreas")
-    if (config.cluster != null) features.add("altScreen")
     if (config.videoInCar && proposed.orEmpty().contains(VideoInCar.FEATURE)) features.add(VideoInCar.FEATURE)
     return features
 }
