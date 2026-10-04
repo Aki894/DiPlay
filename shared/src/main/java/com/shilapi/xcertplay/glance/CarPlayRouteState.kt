@@ -108,7 +108,7 @@ internal class CarPlayRouteState(
         }
         // The iPhone briefly sends an empty current list every few seconds and while rerouting. Keep the last
         // maneuver (and the cached 0x5202 details, which are never resent) and hide it only if the list stays
-        // empty; the bridges' 1 s tick clears the outputs once current() turns null.
+        // empty; the bridges' 1 s tick clears the outputs once currentApple() turns null.
         if (listPresent && firstManeuver == null) {
             if (emptyListSinceNs == null) emptyListSinceNs = nanoTime()
             return RouteChange.NONE
@@ -120,7 +120,7 @@ internal class CarPlayRouteState(
             routeActive = true
         }
         if (distance != null) distanceMeters = distance!!.coerceAtLeast(0)
-        return if (current() != null) RouteChange.GUIDANCE else RouteChange.NONE
+        return if (currentApple() != null) RouteChange.GUIDANCE else RouteChange.NONE
     }
 
     private fun parseManeuverUpdate(data: ByteArray): RouteChange {
@@ -137,7 +137,7 @@ internal class CarPlayRouteState(
             }
         }
         if (index != null && type != null) maneuvers[index!!] = Maneuver(type!!, drivingSide, afterRoad)
-        return if (current() != null) RouteChange.GUIDANCE else RouteChange.NONE
+        return if (currentApple() != null) RouteChange.GUIDANCE else RouteChange.NONE
     }
 
     private inline fun forEachTlv(data: ByteArray, block: (Int, Int, Int) -> Unit) {

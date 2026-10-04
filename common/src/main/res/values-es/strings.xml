@@ -370,5 +370,5 @@
     <string name="widget_distance_km">%1$d km</string>
     <string name="widget_minutes">%1$d min</string>
     <string name="widget_hours_minutes">%1$d h %2$02d min</string>
-    <string name="settings_gesture_fingers_hint">Elige un número de dedos que tu unidad no use ya. BYD reserva el deslizamiento con tres dedos para el panel del aire acondicionado.</string>
+    <string name="settings_gesture_fingers_hint">Elige un número de dedos que la unidad no reserve para controles del sistema.</string>
 </resources>

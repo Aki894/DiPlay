@@ -370,5 +370,5 @@
     <string name="widget_distance_km">%1$d كم</string>
     <string name="widget_minutes">%1$d دقيقة</string>
     <string name="widget_hours_minutes">%1$d س %2$02d د</string>
-    <string name="settings_gesture_fingers_hint">اختر عددًا من الأصابع لا يستخدمه جهاز السيارة. تأخذ وحدة BYD السحب لأسفل بثلاثة أصابع للوحة التكييف.</string>
+    <string name="settings_gesture_fingers_hint">اختر عدد الأصابع الذي لا تستخدمه وحدة الرأس.</string>
 </resources>

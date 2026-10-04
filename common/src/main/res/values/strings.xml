@@ -381,5 +381,5 @@
     <string name="widget_distance_km">%1$d km</string>
     <string name="widget_minutes">%1$d min</string>
     <string name="widget_hours_minutes">%1$d h %2$02d min</string>
-    <string name="settings_gesture_fingers_hint">Pick a finger count your head unit does not already use. Some head units reserve three-finger gestures for system controls.</string>
+    <string name="settings_gesture_fingers_hint">Choose a finger count your head unit does not reserve for system controls.</string>
 </resources>

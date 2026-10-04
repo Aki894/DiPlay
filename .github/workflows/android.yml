@@ -13,7 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Reject credential files in public source
-        run: python3 scripts/check_public_tree.py
+        run: |
+          python3 scripts/check_public_tree.py
+          python3 scripts/check_generic_receiver.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

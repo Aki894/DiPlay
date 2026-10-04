@@ -370,5 +370,5 @@
     <string name="widget_distance_km">%1$d км</string>
     <string name="widget_minutes">%1$d мин</string>
     <string name="widget_hours_minutes">%1$d ч %2$02d мин</string>
-    <string name="settings_gesture_fingers_hint">Выберите число пальцев, не занятое головным устройством. BYD использует свайп тремя пальцами вниз для панели кондиционера.</string>
+    <string name="settings_gesture_fingers_hint">Выберите число пальцев, которое не занято системными жестами.</string>
 </resources>

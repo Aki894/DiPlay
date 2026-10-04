@@ -381,5 +381,5 @@
     <string name="widget_distance_km">%1$d 公里</string>
     <string name="widget_minutes">%1$d 分钟</string>
     <string name="widget_hours_minutes">%1$d 小时 %2$02d 分钟</string>
-    <string name="settings_gesture_fingers_hint">选择车机没有占用的手指数。比亚迪的三指下滑是空调面板，建议改用 2 指。</string>
+    <string name="settings_gesture_fingers_hint">选择车机系统没有占用的手指数。</string>
 </resources>
