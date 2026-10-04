@@ -37,12 +37,15 @@ import org.robolectric.shadows.ShadowLog
 class CarPlayHostDisplaySizeTest {
     private lateinit var activity: CarPlayHostActivity
     private lateinit var controllerConstruction: MockedConstruction<CarPlayController>
+    private lateinit var sinkConstruction: MockedConstruction<AndroidMediaSink>
     private val sizeClass = Class.forName("com.shilapi.xcertplay.CarPlayHostActivity\$DisplaySize")
 
     @Before fun setUp() {
         activity = Robolectric.buildActivity(CarPlayHostActivity::class.java).get()
         // Exercise host startup without launching vendor-service workers or real transports.
         controllerConstruction = mockConstruction(CarPlayController::class.java)
+        // Layout tests do not connect to the external CarLife PCM service.
+        sinkConstruction = mockConstruction(AndroidMediaSink::class.java)
         (getField("teardownExecutor") as ExecutorService).shutdownNow()
         setField("teardownExecutor", PausedExecutorService())
         CarPlayBackgroundSession::class.java.getDeclaredField("owner").apply { isAccessible = true }
@@ -62,6 +65,7 @@ class CarPlayHostDisplaySizeTest {
         (getField("airPlayCommandExecutor") as ExecutorService).shutdownNow()
         CarPlayBackgroundSession.clear()
         controllerConstruction.close()
+        sinkConstruction.close()
     }
 
     @Test fun surroundViewOpenAndCloseKeepsTheNegotiatedCanvas() {
