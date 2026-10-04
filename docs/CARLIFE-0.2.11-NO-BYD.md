@@ -15,3 +15,7 @@ The removals follow LoopLink's approach, adapted to the newer upstream and our b
 Direct H.264, PCM and background native-input transport are retained. Existing CarProjection 0.5.0 remains compatible; no bridge protocol change. Remote-key dispatch uses the upstream Android TV/non-touch detection and does not replace the background Binder input bridge. CarLife car dimensions still take precedence over Android window dimensions.
 
 The experimental application ID and stable test signing remain unchanged. Update over the existing DiPlay CarLife app. Reconnect CarPlay after updating. Verify wireless pairing, car-sized video, music/navigation, native touchpad focus, Back and background operation on the vehicle.
+
+## CarLife.7 shortcut fix
+
+The receiver no longer sends the built-in or saved custom OEM icon to the iPhone. Its AirPlay info explicitly declares `oemIconVisible=false`, and requests from a stale car-home shortcut are ignored instead of opening Android Home. Reconnect CarPlay after updating so the iPhone reads the new info.

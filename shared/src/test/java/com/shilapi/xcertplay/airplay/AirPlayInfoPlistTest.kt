@@ -78,6 +78,24 @@ class AirPlayInfoPlistTest {
     }
 
     @Test
+    fun absentOemIconExplicitlyHidesTheCarHomeShortcut() {
+        val info = AirPlayInfoPlist.build(
+            AirPlayConfig(
+                deviceName = "test",
+                deviceId = "02:00:00:00:00:02",
+                btMac = "02:00:00:00:00:02",
+                sourceVersion = "366.0",
+                main = AirPlayDisplayConfig(widthPixels = 1280, heightPixels = 720),
+                oemLabel = "old saved label",
+            ),
+        )
+
+        assertEquals(false, info["oemIconVisible"])
+        assertFalse(info.containsKey("oemIconLabel"))
+        assertFalse(info.containsKey("oemIcons"))
+    }
+
+    @Test
     fun squareOemIconIsAdvertisedWithItsOriginalBytes() {
         val iconBytes = byteArrayOf(0x01, 0x02, 0x03, 0x04)
         val info = AirPlayInfoPlist.build(

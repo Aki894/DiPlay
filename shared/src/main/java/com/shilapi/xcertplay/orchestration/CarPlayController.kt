@@ -292,6 +292,11 @@ class CarPlayController(
         // The user tapped the car icon in CarPlay: show the head unit's own menu, like its Home button.
         // The session keeps running in the background, so returning to DiPlay resumes CarPlay.
         override fun onHostUiRequested(session: AirPlaySession) {
+            // A stale OEM shortcut must not take the CarLife receiver to the Android launcher.
+            if (airPlayConfig.icons.isEmpty()) {
+                debugLog("CarPlay car UI request ignored: OEM shortcut disabled")
+                return
+            }
             debugLog("CarPlay requested the car UI; opening the head-unit home screen")
             runCatching {
                 appContext.startActivity(
