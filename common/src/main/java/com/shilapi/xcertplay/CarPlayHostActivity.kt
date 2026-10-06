@@ -2649,7 +2649,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun createAirPlayConfig(size: DisplaySize): AirPlayConfig {
         val carTarget = carLifeTarget
         val physical = resolvePhysicalSize(size)
-        val knobPrimary = AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this)
+        val knobPrimary = carTarget != null || AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this)
         val baseDisplay = AirPlayDisplayConfig(
             widthPixels = carTarget?.width ?: size.width,
             heightPixels = carTarget?.height ?: size.height,

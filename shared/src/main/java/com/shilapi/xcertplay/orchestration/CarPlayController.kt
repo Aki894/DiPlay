@@ -402,9 +402,8 @@ class CarPlayController(
                     try {
                         if (closed || activeSession !== session) return@execute
                         for (event in events) when (event[0]) {
-                            1 -> session.sendKnob(com.shilapi.xcertplay.airplay.AirPlayKnobState(
-                                select = event[1] and 1 != 0, home = event[1] and 2 != 0,
-                                back = event[1] and 4 != 0, x = event[2], y = event[3]))
+                            1 -> session.sendKnob(com.shilapi.xcertplay.media.CarLifeInputMapping.knobState(
+                                event[1], event[2], event[3]))
                             2 -> if (event[1] in 0..2) session.sendTouch(listOf(AirPlayContact(0,
                                 (event[2].toDouble() / airPlayConfig.main.widthPixels).coerceIn(0.0, 1.0),
                                 (event[3].toDouble() / airPlayConfig.main.heightPixels).coerceIn(0.0, 1.0),

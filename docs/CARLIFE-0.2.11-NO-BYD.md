@@ -19,3 +19,7 @@ The experimental application ID and stable test signing remain unchanged. Update
 ## CarLife.7 shortcut fix
 
 The receiver no longer sends the built-in or saved custom OEM icon to the iPhone. Its AirPlay info explicitly declares `oemIconVisible=false`, and requests from a stale car-home shortcut are ignored instead of opening Android Home. Reconnect CarPlay after updating so the iPhone reads the new info.
+
+## CarLife.8 touchpad focus fix
+
+Ordinary CarProjection pad swipes now use relative wheel HID reports, matching the existing working double-tap-slide and native D-pad focus path. Previously their relative steps were sent through legacy absolute X/Y fields. CarLife direct sessions declare knob input as primary while retaining touchscreen HID support. Ordinary Android head-unit input detection is unchanged. Double-tap and mechanical confirmation remain momentary selections. Update DiPlay only, then reconnect CarPlay; verify focus movement in both directions without double-tapping, confirmation, Back and touch input on the vehicle.
