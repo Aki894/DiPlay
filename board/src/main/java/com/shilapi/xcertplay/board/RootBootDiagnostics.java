@@ -27,8 +27,9 @@ public final class RootBootDiagnostics {
         try {
             if(!safeDirectory(folder) || Files.isSymbolicLink(target.toPath()))return;
             if(target.length()>128*1024)return;
-            try(FileOutputStream out=new FileOutputStream(target,true)){out.write((redact(line)+"\n").getBytes(StandardCharsets.UTF_8));}
-        } catch(IOException ignored) { /* Android logcat still carries the event. */ }
+            String record=new JSONObject().put("elapsedMs",SystemClock.elapsedRealtime()).put("event",redact(name).trim()).toString();
+            try(FileOutputStream out=new FileOutputStream(target,true)){out.write((record+"\n").getBytes(StandardCharsets.UTF_8));}
+        } catch(IOException | org.json.JSONException ignored) { /* Android logcat still carries the event. */ }
     }
     public static void request(Context context,String requestId) throws IOException {
         if(!requestId.matches("[0-9a-f]{12}"))throw new IOException("Invalid capture ID");
@@ -66,6 +67,7 @@ public final class RootBootDiagnostics {
                     put(zip,"live/kernel.txt",command("/system/bin/dmesg"));entries++;
                     zip.finish();output.flush();output.getFD().sync();
                 }
+                if(temp.length()>8L*1024*1024)throw new IOException("Boot export exceeds size limit");
                 if(!temp.setReadable(true,false) || !temp.renameTo(new File(dir,"boot-diagnostics.zip")))throw new IOException("Cannot publish diagnostic archive");
                 status(dir,"ready",null,entries,requestId);
                 event("boot_export_ready entries="+entries);
