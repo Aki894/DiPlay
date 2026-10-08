@@ -34,6 +34,19 @@ public final class BoardProvisioner {
         systemThread.setAccessible(true);
         systemThread.setBoolean(main,false);
         context=(Context)thread.getMethod("getSystemContext").invoke(main);
+        // Android 13's default AppOps message sampler reports SyncNotedAppOp
+        // through an app-only Binder path that requires a non-null package name.
+        // app_process has no bound application, so getAddress() otherwise fails
+        // in Parcel.readExceptionCode before its Bluetooth result is delivered.
+        // Disable ONLY this root process's optional stack-trace sampling. The
+        // system-side permission checks and AppOps accounting remain active.
+        Class<?> sampling=Class.forName("com.android.internal.app.MessageSamplingConfig");
+        Object noSampling=sampling.getConstructor(int.class,int.class,long.class)
+                .newInstance(AppOpsManager.OP_NONE,0,Long.MAX_VALUE);
+        Field samplingConfig=AppOpsManager.class.getDeclaredField("sConfig");
+        samplingConfig.setAccessible(true);
+        samplingConfig.set(null,noSampling);
+        android.util.Log.i("WuKongProvision","Root AppOps stack sampling disabled");
         provision();
         // USB authorization must run even if optional Bluetooth setup is unavailable.
         try { registerPairingReceiver(); pairingReceiverReady=true; }
