@@ -186,8 +186,17 @@ public final class BoardProvisioner {
                 String address=command.substring(7);
                 BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
                 BluetoothDevice device=adapter.getRemoteDevice(address);
-                if(!Boolean.TRUE.equals(BluetoothDevice.class.getMethod("removeBond").invoke(device)))throw new IOException("Remove bond rejected");
-                result="removal requested";
+                int before=device.getBondState();
+                if(before==BluetoothDevice.BOND_NONE) {
+                    result="already unpaired";
+                } else {
+                    String method=before==BluetoothDevice.BOND_BONDING?"cancelBondProcess":"removeBond";
+                    Object accepted=BluetoothDevice.class.getMethod(method).invoke(device);
+                    int after=device.getBondState();
+                    if(!Boolean.TRUE.equals(accepted) && after!=BluetoothDevice.BOND_NONE)
+                        throw new IOException(method+" rejected; bondState="+before+" -> "+after);
+                    result=after==BluetoothDevice.BOND_NONE?"unpaired":"removal requested";
+                }
             }
             else if("reboot".equals(command)) run("/system/bin/reboot");
             else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
@@ -209,8 +218,11 @@ public final class BoardProvisioner {
             throw new IllegalStateException("Bluetooth is not ON; cannot change discoverability");
         Object status=BluetoothAdapter.class.getMethod("setScanMode",int.class).invoke(adapter,
                 enabled?BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:BluetoothAdapter.SCAN_MODE_CONNECTABLE);
-        // Android 13 returns BluetoothStatusCodes.SUCCESS (0), not a void result.
-        if(!(status instanceof Integer) || ((Integer)status)!=BluetoothStatusCodes.SUCCESS)
+        // The pinned Tiramisu preview (SDK 32) returns boolean; released API 33
+        // returns BluetoothStatusCodes. Inspect the actual result, not SDK_INT.
+        boolean accepted=Boolean.TRUE.equals(status)
+                || (status instanceof Integer && ((Integer)status)==BluetoothStatusCodes.SUCCESS);
+        if(!accepted)
             throw new IOException("Bluetooth setScanMode rejected, status="+status);
     }
     private static void display(boolean enabled) throws Exception {
