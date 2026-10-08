@@ -20,7 +20,7 @@ public final class BoardProvisioner {
     private static final long[] taskLogAt=new long[3];
     // This entry is executed only by root app_process, not as a targetSdk APK process.
     // Android 13 app_process does not apply the APK's target-SDK hidden-API cutoff.
-    @android.annotation.SuppressLint("SoonBlockedPrivateApi")
+    @android.annotation.SuppressLint({"SoonBlockedPrivateApi","BlockedPrivateApi"})
     public static void main(String[] args) throws Exception {
         if(android.os.Process.myUid()!=0) throw new SecurityException("Root provisioning only");
         Looper.prepareMainLooper();
