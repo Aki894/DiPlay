@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins { alias(libs.plugins.android.application) }
 val stageBoardSources = tasks.register<Sync>("stageBoardSources") {
     from("../common/src/main/java") {
@@ -47,7 +49,7 @@ dependencies {
 abstract class VerifyBoardAssets : DefaultTask() {
     @get:Input @get:Optional abstract val assetPath: Property<String>
     @TaskAction fun verify() {
-        val dir=assetPath.orNull?.let { java.io.File(it) }
+        val dir=assetPath.orNull?.let { File(it) }
         check(dir != null && listOf("identity.pk8", "certificate.p7b").all { dir.resolve("offline-mfi/$it").isFile }) {
             "Standalone board APK requires explicitly provisioned DIPLAY_AUTH_ASSETS_DIR"
         }
