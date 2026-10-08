@@ -14,6 +14,10 @@ public final class BoardProvisioner {
     private static final String PHONE="com.shihab.diplay.hudtest",CAR="com.projection.car";
     private static volatile long pairingUntil;
     private static Context context;
+    // ReceiverDispatcher's Binder holds a weak reference; keep it alive for this process.
+    private static Object pairingDispatcher;
+    private static boolean pairingReceiverReady;
+    private static final long[] taskLogAt=new long[3];
     public static void main(String[] args) throws Exception {
         if(android.os.Process.myUid()!=0) throw new SecurityException("Root provisioning only");
         Looper.prepareMainLooper();
@@ -21,9 +25,33 @@ public final class BoardProvisioner {
         Object main=thread.getMethod("systemMain").invoke(null);
         context=(Context)thread.getMethod("getSystemContext").invoke(main);
         provision();
-        context.registerReceiver(new BroadcastReceiver() {
+        // USB authorization must run even if optional Bluetooth setup is unavailable.
+        try { registerPairingReceiver(); pairingReceiverReady=true; }
+        catch(Exception e) { android.util.Log.w("WuKongProvision","Pairing receiver unavailable; USB loop continues",rootCause(e)); }
+        android.util.Log.i("WuKongProvision","USB permission loop ready");
+        Handler handler=new Handler(Looper.getMainLooper());
+        handler.post(new Runnable() { public void run() {
+            for(int task=0;task<3;task++) try {
+                if(task==0)grantUsb();else if(task==1)bluetoothAddress();else maintenance();
+            } catch(Exception e) {
+                long now=SystemClock.elapsedRealtime();
+                if(taskLogAt[task]==0 || now-taskLogAt[task]>=30000) {
+                    taskLogAt[task]=now;
+                    android.util.Log.w("WuKongProvision","Task "+task+" retry",rootCause(e));
+                }
+            }
+            handler.postDelayed(this,2000);
+        }});
+        Looper.loop();
+    }
+    private static Throwable rootCause(Throwable e) {
+        while(e instanceof InvocationTargetException && e.getCause()!=null)e=e.getCause();
+        return e;
+    }
+    private static void registerPairingReceiver() throws Exception {
+        BroadcastReceiver receiver=new BroadcastReceiver() {
             @Override public void onReceive(Context c,Intent i) {
-                if(SystemClock.elapsedRealtime()>pairingUntil) return;
+                if(pairingUntil==0 || SystemClock.elapsedRealtime()>pairingUntil) return;
                 BluetoothDevice d=i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 int variant=i.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT,-1);
                 // Numeric comparison/consent only. Never invent or silently inject a PIN/passkey.
@@ -31,15 +59,24 @@ public final class BoardProvisioner {
                     BluetoothDevice.class.getMethod("setPairingConfirmation",boolean.class).invoke(d,true);
                 } catch(Exception e) { android.util.Log.w("WuKongProvision","Pair confirmation unavailable",e); }
             }
-        },new IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST));
-        Handler handler=new Handler(Looper.getMainLooper());
-        handler.post(new Runnable() { public void run() {
-            for(int task=0;task<3;task++) try {
-                if(task==0)grantUsb();else if(task==1)bluetoothAddress();else maintenance();
-            } catch(Exception e) { android.util.Log.w("WuKongProvision","Task "+task+" retry: "+e.getClass().getSimpleName()); }
-            handler.postDelayed(this,2000);
-        }});
-        Looper.loop();
+        };
+        // app_process is not an AMS-managed application. Passing ActivityThread's
+        // IApplicationThread via Context.registerReceiver causes "Unable to find app".
+        // Use the Android 13 Binder API's supported null-caller path for root processes.
+        Class<?> dispatcherClass=Class.forName("android.app.LoadedApk$ReceiverDispatcher");
+        Constructor<?> constructor=dispatcherClass.getDeclaredConstructor(
+                BroadcastReceiver.class,Context.class,Handler.class,Instrumentation.class,boolean.class);
+        constructor.setAccessible(true);
+        pairingDispatcher=constructor.newInstance(receiver,context,new Handler(Looper.getMainLooper()),null,true);
+        Method getReceiver=dispatcherClass.getDeclaredMethod("getIIntentReceiver");
+        getReceiver.setAccessible(true);
+        Object binderReceiver=getReceiver.invoke(pairingDispatcher);
+        Object manager=ActivityManager.class.getMethod("getService").invoke(null);
+        Class.forName("android.app.IActivityManager").getMethod("registerReceiverWithFeature",
+                Class.forName("android.app.IApplicationThread"),String.class,String.class,String.class,
+                Class.forName("android.content.IIntentReceiver"),IntentFilter.class,String.class,int.class,int.class)
+                .invoke(manager,null,null,null,null,binderReceiver,
+                        new IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST),null,0,Context.RECEIVER_EXPORTED);
     }
     private static void run(String... args) throws Exception {
         java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).redirectOutput(new File("/dev/null")).start();
@@ -107,6 +144,10 @@ public final class BoardProvisioner {
         String result="completed";
         try {
             if("pair".equals(command)) {
+                if(!pairingReceiverReady) {
+                    registerPairingReceiver();
+                    pairingReceiverReady=true;
+                }
                 pairingUntil=SystemClock.elapsedRealtime()+120000;
                 setDiscoverable(true);
                 new Handler(Looper.getMainLooper()).postDelayed(()->{if(SystemClock.elapsedRealtime()>=pairingUntil)try{setDiscoverable(false);}catch(Exception ignored){}},120000);
