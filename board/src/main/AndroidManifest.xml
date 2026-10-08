@@ -4,8 +4,11 @@
     <uses-permission android:name="com.projection.car.permission.BOARD_CONTROL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Legacy Wi-Fi Direct checks location even for this displayless boot service. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <application android:label="WuKong CarPlay Bridge" android:allowBackup="false">
-        <service android:name=".BoardService" android:exported="false" android:foregroundServiceType="connectedDevice|microphone" />
+        <service android:name=".BoardService" android:exported="false" android:foregroundServiceType="connectedDevice|microphone|location" />
         <service android:name="com.shilapi.xcertplay.shared.MyCarAppService" tools:node="remove" />
         <meta-data android:name="androidx.car.app.minCarApiLevel" tools:node="remove" />
         <receiver android:name=".BoardBootReceiver" android:exported="true">
