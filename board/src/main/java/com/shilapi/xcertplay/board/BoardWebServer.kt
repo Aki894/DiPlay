@@ -7,7 +7,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 /** Control plane only; never receives media or executes a caller-supplied command line. */
-class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD(if(lan) "0.0.0.0" else "127.0.0.1",8765) {
+class BoardWebServer(private val service: BoardService,@Suppress("UNUSED_PARAMETER") lan: Boolean) : NanoHTTPD("0.0.0.0",8765) {
     private val token=BoardConfig.token(service).toByteArray()
     private val lock=Any()
     @Volatile private var pending: String?=null
@@ -35,6 +35,8 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
     override fun stop() { super.stop(); rollback?.cancel(false); timer.shutdownNow() }
     override fun serve(session: IHTTPSession): Response {
         try {
+            if(!BoardConfig.load(service).webLan && session.remoteIpAddress !in setOf("127.0.0.1","::1","0:0:0:0:0:0:0:1"))
+                return json(Response.Status.FORBIDDEN,JSONObject().put("error","LAN management disabled"))
             if(session.uri=="/" && session.method==Method.GET) return response(Response.Status.OK,"text/html",
                 service.assets.open("index.html").bufferedReader().use { it.readText() })
             if(!MessageDigest.isEqual(token,session.headers["authorization"].orEmpty().removePrefix("Bearer ").toByteArray()))
@@ -56,7 +58,7 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                 session.method==Method.GET && session.uri=="/api/v1/config" -> BoardConfig.load(service).json().put("revision",prefs.getInt("revision",0))
                 session.method==Method.GET && session.uri=="/api/v1/logs" -> JSONObject().put("lines",service.log.json())
                 session.method==Method.GET && session.uri=="/api/v1/diagnostics/export" -> return response(Response.Status.OK,"text/plain",
-                    service.status().toString(2)+"\n"+service.log.export())
+                    service.status().toString(2)+"\n"+service.log.export()+"\nHEALTH\n"+service.healthExport())
                 session.method==Method.GET && session.uri=="/api/v1/phones" -> {
                     if (service.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                         throw SecurityException("Bluetooth permission missing; run board provisioning")
@@ -75,7 +77,7 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                     BoardConfig.save(service,next); service.configChanged()
                     val lease=pending
                     rollback=timer.schedule({ synchronized(lock) { if(pending==lease) restore() } },60,java.util.concurrent.TimeUnit.SECONDS)
-                    JSONObject().put("confirmId",pending).put("expiresSeconds",60).put("webBindingNeedsServiceRestart",old.webLan!=next.webLan)
+                    JSONObject().put("confirmId",pending).put("expiresSeconds",60).put("webBindingNeedsServiceRestart",false)
                 }
                 session.method==Method.POST && session.uri=="/api/v1/config/confirm" -> synchronized(lock) {
                     require(body.getString("confirmId")==pending && pending!=null) { "No matching pending configuration" }
@@ -121,4 +123,5 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
         addHeader("Content-Security-Policy","default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
     }
 }
+
 

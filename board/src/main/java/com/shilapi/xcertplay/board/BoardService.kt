@@ -34,12 +34,23 @@ class BoardService : Service() {
     private lateinit var wake: PowerManager.WakeLock
     private var retiring: CarPlayController? = null
     private var attempts = 0
+    private val serviceStartedMs = SystemClock.elapsedRealtime()
+    @Volatile private var firstActiveMs: Long? = null
+    private lateinit var health: BoardHealth
+    private var maintenanceGroup: com.shilapi.xcertplay.network.WirelessHotspotManager? = null
+    @Volatile private var maintenanceHotspot: JSONObject? = null
+    private val healthTick = object : Runnable { override fun run() {
+        if(instance!==this@BoardService)return
+        val stats=sink?.mediaStats() ?: longArrayOf(0,0,0,0)
+        health.record(state,stats)
+        actor.postDelayed(this,15000)
+    } }
     private val retry = Runnable { if (desired) replaceSession() }
     private val pairingReceiver = BoardPairingReceiver()
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onCreate() {
         super.onCreate(); instance = this
-        thread.start(); actor = Handler(thread.looper); log = BoardLog(this)
+        thread.start(); actor = Handler(thread.looper); log = BoardLog(this); health = BoardHealth(this)
         val pairingFilter=IntentFilter(android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST)
         // A managed application supplies its real package/UID to broadcast delivery.
         if(Build.VERSION.SDK_INT>=33) registerReceiver(pairingReceiver,pairingFilter,Context.RECEIVER_EXPORTED)
@@ -55,7 +66,8 @@ class BoardService : Service() {
         discovery = CarLifeVideoBridge(this,onTargetChanged = { next -> actor.post {
             if (target != next) { target = next; if (desired) replaceSession() }
         } })
-        log.add("Service ready; preview disabled; API on port 8765")
+        log.add("Service ready elapsedMs=$serviceStartedMs; preview disabled; API on port 8765")
+        actor.post(healthTick)
     }
     private fun updateForeground(config: BoardConfig?) {
         val notification = Notification.Builder(this,"board_bridge")
@@ -78,6 +90,8 @@ class BoardService : Service() {
             "stop" -> request("stop")
             "reconnect" -> request("reconnect")
             "manage" -> Unit
+            "maintenance-ap" -> maintenance("maintenance-ap")
+            "boot" -> if (BoardConfig.load(this).autoStart && !desired && maintenanceGroup==null) request("start")
             else -> if (command == "start" || getSharedPreferences("board",0).getBoolean("requested",BoardConfig.load(this).autoStart)) request("start")
         }
         return START_STICKY
@@ -90,6 +104,7 @@ class BoardService : Service() {
             desired = command != "stop"
             getSharedPreferences("board",0).edit().putBoolean("requested",desired).apply()
             actor.removeCallbacks(retry)
+            closeMaintenance()
             if (desired) replaceSession() else { state="stopping"; error=""; closeSession(); updateForeground(null); state = "idle" }
         }
     }
@@ -114,8 +129,16 @@ class BoardService : Service() {
         }
         val cfg = BoardConfig.load(this)
         val missing = missingPermissions(cfg)
-        if (missing.isNotEmpty()) { fail("Permissions missing: ${missing.joinToString()}"); return }
+        if (missing.isNotEmpty()) { waitReady("Permissions missing: ${missing.joinToString()}"); return }
         if (!cfg.wireless && CarPlayVpnService.prepare(this) != null) { fail("VPN not provisioned; run board installer"); return }
+        if(cfg.wireless) {
+            val wifi=getSystemService(android.net.wifi.WifiManager::class.java)
+            val bt=getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter
+            if(!wifi.isWifiEnabled || bt?.isEnabled!=true) {waitReady("Waiting for Wi-Fi and Bluetooth");return}
+            if(cfg.hotspotMode=="WIFI_P2P" && !File("/sys/class/net/p2p0").exists()) {
+                waitReady("Waiting for p2p0; install appliance boot helper");return
+            }
+        }
         try {
             updateForeground(cfg)
             DiPlayBootstrap.ensure(this)
@@ -123,7 +146,7 @@ class BoardService : Service() {
             val deviceId = DiPlayBootstrap.deviceId(identity)
             val bluetoothAddress=DiPlayBluetooth.localAddress(this)
             if (cfg.wireless && bluetoothAddress==null) {
-                fail("Bluetooth controller address unavailable; waiting for board provisioning");return
+                waitReady("Bluetooth controller address unavailable; waiting for board provisioning");return
             }
             val size = target
             val width = size?.width ?: cfg.width; val height = size?.height ?: cfg.height
@@ -147,7 +170,7 @@ class BoardService : Service() {
                 manualHotspotSsid=cfg.ssid,manualHotspotPassphrase=cfg.passphrase,
                 manualHotspotBand=ManualHotspotBand.valueOf(cfg.band))
             val listener = object : AirPlaySessionListener {
-                override fun onSessionActive(session: AirPlaySession) { actor.post { if(gen==generation) { state="active"; error=""; attempts=0 } } }
+                override fun onSessionActive(session: AirPlaySession) { actor.post { if(gen==generation) { state="active"; error=""; attempts=0; markActive() } } }
                 override fun onSessionEnded(session: AirPlaySession) { actor.post { if(gen==generation && desired) fail("CarPlay session ended") } }
                 override fun onTransportError(message: String) { actor.post { if(gen==generation && desired) fail(message) } }
                 override fun onDebugLog(message: String) { log.add(message) }
@@ -156,6 +179,7 @@ class BoardService : Service() {
                 AirPlayPersistence.savePairing(this,id,key) },listener,CarPlayMediaEngine(renderer,cfg.microphone),
                 reportStatus={ next -> actor.post { if(gen==generation) {
                     state=next.javaClass.simpleName
+                    if(state=="WirelessActive") {attempts=0;markActive()}
                     if(next is CarPlayStatus.Failed) fail(next.message, !next.wifiResetRequired)
                     if(next is CarPlayStatus.HotspotReady) log.add("Hotspot ready address=${next.address} backend=${next.backend} band=${next.band}")
                 } } },loadPairRecord={ AirPlayPersistence.loadLockdownRecord(this) },
@@ -170,6 +194,14 @@ class BoardService : Service() {
     private val renewWake = object : Runnable { override fun run() {
         if(desired && controller!=null) { wake.acquire(30*60*1000L); actor.postDelayed(this,10*60*1000L) }
     } }
+    private fun markActive() {
+        if(firstActiveMs==null) {firstActiveMs=SystemClock.elapsedRealtime();log.add("First CarPlay active elapsedMs=$firstActiveMs")}
+    }
+    private fun waitReady(message: String) {
+        state="waiting-for-board";error=message
+        actor.removeCallbacks(retry)
+        if(desired)actor.postDelayed(retry,2000)
+    }
     private fun fail(message: String, retryAllowed: Boolean = true) {
         error=message.take(1024); state="error"; log.add(error)
         actor.removeCallbacks(retry)
@@ -186,6 +218,7 @@ class BoardService : Service() {
         sink?.let { runCatching { it.close() } }; sink=null
         if(wake.isHeld) wake.release()
     }
+    fun healthExport()=health.export()
     fun status(): JSONObject {
         val memory = android.os.Debug.MemoryInfo().also { android.os.Debug.getMemoryInfo(it) }
         val stats=sink?.mediaStats() ?: longArrayOf(0,0,0,0)
@@ -199,8 +232,47 @@ class BoardService : Service() {
             .put("carLife",CarLifeControl.status(this))
             .put("maintenance",runCatching { File(filesDir,"maintenance-result").readText().take(256) }.getOrDefault("root helper not yet used"))
             .put("pairing",BoardPairingReceiver.status(this))
+            .put("boot",JSONObject().put("serviceReadyMs",serviceStartedMs).put("firstCarPlayActiveMs",firstActiveMs)
+                .put("userUnlocked",getSystemService(UserManager::class.java).isUserUnlocked))
+            .put("health",health.summary())
+            .put("management",management())
+    }
+    private fun management(): JSONObject = JSONObject().put("lanEnabled",BoardConfig.load(this).webLan)
+        .put("urls",JSONArray(runCatching {
+            java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>()
+                .filter { !it.isLinkLocalAddress }.map { "http://${it.hostAddress}:8765/" }
+        }.getOrDefault(emptyList<String>())))
+        .put("maintenanceHotspot",maintenanceHotspot)
+    private fun closeMaintenance() {
+        val previous=maintenanceGroup;maintenanceGroup=null;maintenanceHotspot=null
+        previous?.let { runCatching { it.close() } }
+    }
+    private fun startMaintenance() {
+        desired=false;getSharedPreferences("board",0).edit().putBoolean("requested",false).apply()
+        actor.removeCallbacks(retry);closeSession();closeMaintenance()
+        val cfg=BoardConfig.load(this)
+        BoardConfig.save(this,cfg.copy(webLan=true))
+        val group=com.shilapi.xcertplay.network.WifiP2pGroupManager(this,log::add,0)
+        maintenanceGroup=group;state="maintenance-starting";error=""
+        Thread({
+            try {
+                val info=group.start(30000)
+                actor.post {
+                    if(maintenanceGroup===group) {
+                        maintenanceHotspot=JSONObject().put("ssid",info.ssid).put("passphrase",info.passphrase)
+                            .put("address",info.hostAddress?.hostAddress).put("band",info.bandLabel)
+                        state="maintenance-ready";wake.acquire(30*60*1000L)
+                    }
+                }
+            } catch(e:Exception) {actor.post {
+                if(maintenanceGroup===group) {closeMaintenance();state="error";error="Maintenance hotspot: ${e.message}"}
+            }}
+        },"board-maintenance-ap").start()
     }
     fun maintenance(action: String) {
+        if(action=="maintenance-ap") {actor.post { runCatching { startMaintenance() }.onFailure {state="error";error=it.message.orEmpty()} };return}
+        if(action=="maintenance-stop") {request("start");return}
         require(action in setOf("reboot","pair","pair-stop","display-off","display-on") || Regex("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(action))
         File(filesDir,"maintenance-request").writeText(action)
         log.add("Maintenance requested: $action")
@@ -208,7 +280,7 @@ class BoardService : Service() {
     override fun onDestroy() {
         instance=null; unregisterReceiver(pairingReceiver); web?.stop(); discovery?.close(); discovery=null
         actor.removeCallbacksAndMessages(null)
-        actor.post { closeSession(); log.close(); thread.quitSafely() }
+        actor.post { closeMaintenance();closeSession(); log.close(); thread.quitSafely() }
         super.onDestroy()
     }
     companion object { @Volatile var instance: BoardService? = null; private set }
@@ -216,7 +288,7 @@ class BoardService : Service() {
 
 class BoardBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context,intent: Intent) {
-        if(intent.action==Intent.ACTION_BOOT_COMPLETED) context.startForegroundService(Intent(context,BoardService::class.java).putExtra("command","boot"))
+        if(intent.action==Intent.ACTION_BOOT_COMPLETED || intent.action==Intent.ACTION_MY_PACKAGE_REPLACED) context.startForegroundService(Intent(context,BoardService::class.java).putExtra("command","boot"))
     }
 }
 class BoardControlActivity : Activity() {
@@ -237,4 +309,5 @@ class BoardUsbActivity : Activity() {
         finish()
     }
 }
+
 

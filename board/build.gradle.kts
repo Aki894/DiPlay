@@ -14,8 +14,8 @@ android {
         applicationId = "com.shihab.diplay.hudtest"
         minSdk = 28
         targetSdk = 33 // Appliance is pinned to Android 13; do not inherit newer boot restrictions.
-        versionCode = 38
-        versionName = "0.2.11-wukongpi.2"
+        versionCode = 39
+        versionName = "0.2.11-wukongpi.3"
         ndk { abiFilters += "armeabi-v7a" }
     }
     signingConfigs {
@@ -61,4 +61,5 @@ val verifyStandalone=tasks.register<VerifyBoardAssets>("verifyStandalone") {
 tasks.register("assembleStandaloneDebug") { dependsOn(verifyStandalone, "assembleDebug") }
 
 tasks.named("preBuild") { dependsOn(stageBoardSources) }
+
 

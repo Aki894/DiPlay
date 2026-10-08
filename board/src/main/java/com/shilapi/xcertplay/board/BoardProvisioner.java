@@ -45,7 +45,20 @@ public final class BoardProvisioner {
         samplingConfig.set(null,noSampling);
         android.util.Log.i("WuKongProvision","Root AppOps stack sampling disabled");
         pairingWindow(0);
-        provision();
+        new Thread(() -> {
+            while(true) {
+                try {
+                    if(!context.getSystemService(UserManager.class).isUserUnlocked()) {Thread.sleep(1000);continue;}
+                    provision();
+                    bluetoothAddress();
+                    run("/system/bin/am","start-foreground-service","-n",PHONE+"/com.shilapi.xcertplay.board.BoardService","--es","command","boot");
+                    run("/system/bin/am","start-foreground-service","-n",CAR+"/.BoardSessionService","--es","command","start");
+                    android.util.Log.i("WuKongProvision","Provisioning ready elapsedMs="+SystemClock.elapsedRealtime());
+                    break;
+                } catch(Exception e) {android.util.Log.w("WuKongProvision","Provisioning retry",e);}
+                try {Thread.sleep(2000);}catch(InterruptedException e){return;}
+            }
+        },"board-provision").start();
         android.util.Log.i("WuKongProvision","USB permission loop ready");
         Handler handler=new Handler(Looper.getMainLooper());
         handler.post(new Runnable() { public void run() {
@@ -120,21 +133,28 @@ public final class BoardProvisioner {
     private static void provision() throws Exception {
         for(String pkg:new String[]{PHONE,CAR}) {
             String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"POST_NOTIFICATIONS"};
-            for(String permission:perms) run("/system/bin/pm","grant",pkg,"android.permission."+permission);
+            for(String permission:perms) grantMissing(pkg,permission);
             // Wi-Fi Direct on the pinned SDK 32 build checks location AppOps.
             // A displayless service starts from boot/web, so grant background
             // access AFTER coarse/fine instead of fighting PermissionManager's
             // per-UID foreground mode with temporary appops overrides.
             if(pkg.equals(PHONE) && Build.VERSION.SDK_INT>=29 && Build.VERSION.SDK_INT<=32)
-                run("/system/bin/pm","grant",pkg,"android.permission.ACCESS_BACKGROUND_LOCATION");
+                grantMissing(pkg,"ACCESS_BACKGROUND_LOCATION");
             run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
             run("/system/bin/cmd","appops","set",pkg,"RUN_IN_BACKGROUND","allow");
         }
         run("/system/bin/cmd","appops","set",PHONE,"ACTIVATE_VPN","allow");
-        run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
-        run("/system/bin/am","force-stop","com.android.mtp");
+        if(context.getPackageManager().getApplicationEnabledSetting("com.android.mtp")!=android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+            run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
         run("/system/bin/svc","bluetooth","enable");
         run("/system/bin/svc","wifi","enable");
+    }
+    private static void grantMissing(String pkg,String name) throws Exception {
+        String permission="android.permission."+name;
+        String[] requested=context.getPackageManager().getPackageInfo(pkg,android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions;
+        if(requested==null || !java.util.Arrays.asList(requested).contains(permission))return;
+        if(context.getPackageManager().checkPermission(permission,pkg)==android.content.pm.PackageManager.PERMISSION_GRANTED)return;
+        run("/system/bin/pm","grant","--user","0",pkg,permission);
     }
     private static Object usb() throws Exception {
         IBinder binder=(IBinder)Class.forName("android.os.ServiceManager").getMethod("getService",String.class).invoke(null,"usb");
@@ -249,4 +269,5 @@ public final class BoardProvisioner {
         }
     }
 }
+
 

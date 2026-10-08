@@ -45,7 +45,7 @@ class BoardControlsTest {
     }
     private fun request(uri: String,method: NanoHTTPD.Method,headers: Map<String,String>): NanoHTTPD.IHTTPSession =
         Proxy.newProxyInstance(javaClass.classLoader,arrayOf(NanoHTTPD.IHTTPSession::class.java)) { _,m,_ ->
-            when(m.name) { "getUri" -> uri; "getMethod" -> method; "getHeaders" -> headers; else -> null }
+            when(m.name) { "getUri" -> uri; "getMethod" -> method; "getHeaders" -> headers; "getRemoteIpAddress" -> headers["test-ip"] ?: "127.0.0.1"; else -> null }
         } as NanoHTTPD.IHTTPSession
     @Test fun webRejectsMissingTokenCrossOriginAndOversizedBodies() {
         val service=Robolectric.buildService(BoardService::class.java).get()
@@ -59,6 +59,19 @@ class BoardControlsTest {
                 mapOf("authorization" to auth,"content-type" to "application/json","content-length" to "9000"))).status)
             assertEquals(NanoHTTPD.Response.Status.NOT_FOUND,server.serve(request("/api/v1/shell",NanoHTTPD.Method.GET,mapOf("authorization" to auth))).status)
         } finally { server.stop() }
+    }
+    @Test fun lanAccessChangesWithoutRebindingAndStillRequiresToken() {
+        val service=Robolectric.buildService(BoardService::class.java).get()
+        BoardConfig.save(service,BoardConfig(webLan=false))
+        val server=BoardWebServer(service,false)
+        try {
+            val remote=mapOf("test-ip" to "192.168.49.2")
+            assertEquals(NanoHTTPD.Response.Status.FORBIDDEN,server.serve(request("/api/v1/config",NanoHTTPD.Method.GET,remote)).status)
+            BoardConfig.save(service,BoardConfig(webLan=true))
+            assertEquals(NanoHTTPD.Response.Status.UNAUTHORIZED,server.serve(request("/api/v1/config",NanoHTTPD.Method.GET,remote)).status)
+            assertEquals(NanoHTTPD.Response.Status.OK,server.serve(request("/api/v1/config",NanoHTTPD.Method.GET,
+                remote+mapOf("authorization" to "Bearer "+BoardConfig.token(service)))).status)
+        } finally {server.stop()}
     }
     @Test fun metadataIsBoundedAndSecretsAreRedacted() {
         val service=Robolectric.buildService(BoardService::class.java).get()
@@ -114,4 +127,5 @@ class BoardControlsTest {
         } finally { sockets.forEach { it.close() };server.stop() }
     }
 }
+
 
