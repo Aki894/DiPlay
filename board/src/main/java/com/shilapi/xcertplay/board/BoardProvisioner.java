@@ -42,7 +42,7 @@ public final class BoardProvisioner {
         // system-side permission checks and AppOps accounting remain active.
         Class<?> sampling=Class.forName("com.android.internal.app.MessageSamplingConfig");
         Object noSampling=sampling.getConstructor(int.class,int.class,long.class)
-                .newInstance(AppOpsManager.OP_NONE,0,Long.MAX_VALUE);
+                .newInstance(-1 /* Android 13 OP_NONE */,0,Long.MAX_VALUE);
         Field samplingConfig=AppOpsManager.class.getDeclaredField("sConfig");
         samplingConfig.setAccessible(true);
         samplingConfig.set(null,noSampling);
