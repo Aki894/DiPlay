@@ -15,6 +15,23 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
     private val timer=java.util.concurrent.ScheduledThreadPoolExecutor(1)
     private var rollback: java.util.concurrent.ScheduledFuture<*>?=null
     private val prefs=service.getSharedPreferences("board",0)
+    private val clients=java.util.concurrent.ConcurrentHashMap.newKeySet<ClientHandler>()
+    private val workers=java.util.concurrent.ThreadPoolExecutor(2,2,0L,java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(8),java.util.concurrent.ThreadFactory { r ->
+            Thread(r,"board-http").apply { isDaemon=true }
+        })
+    init {
+        setAsyncRunner(object : AsyncRunner {
+            override fun exec(client: ClientHandler) {
+                clients.add(client)
+                try { workers.execute(client) } catch (_: java.util.concurrent.RejectedExecutionException) {
+                    clients.remove(client);client.close()
+                }
+            }
+            override fun closed(client: ClientHandler) { clients.remove(client) }
+            override fun closeAll() { clients.forEach { it.close() };clients.clear();workers.shutdownNow() }
+        })
+    }
     override fun stop() { super.stop(); rollback?.cancel(false); timer.shutdownNow() }
     override fun serve(session: IHTTPSession): Response {
         try {

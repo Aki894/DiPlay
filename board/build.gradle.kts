@@ -44,13 +44,17 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.17")
 }
-val verifyStandalone by tasks.registering {
-    doLast {
-        val dir = providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull?.let { file(it) }
+abstract class VerifyBoardAssets : DefaultTask() {
+    @get:Input @get:Optional abstract val assetPath: Property<String>
+    @TaskAction fun verify() {
+        val dir=assetPath.orNull?.let { java.io.File(it) }
         check(dir != null && listOf("identity.pk8", "certificate.p7b").all { dir.resolve("offline-mfi/$it").isFile }) {
             "Standalone board APK requires explicitly provisioned DIPLAY_AUTH_ASSETS_DIR"
         }
     }
+}
+val verifyStandalone=tasks.register<VerifyBoardAssets>("verifyStandalone") {
+    assetPath.set(providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR"))
 }
 tasks.register("assembleStandaloneDebug") { dependsOn(verifyStandalone, "assembleDebug") }
 

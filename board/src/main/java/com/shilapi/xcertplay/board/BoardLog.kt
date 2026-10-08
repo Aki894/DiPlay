@@ -18,6 +18,20 @@ class BoardLog(c: Context) {
     private val closed = AtomicBoolean()
     val dropped = AtomicLong()
     private val redact = Regex("(?i)(passphrase|password|token|key)=[^ ,;]+")
+    init {
+        // Preserve a bounded tail from the previous process for post-crash diagnostics.
+        runCatching {
+            if(file.isFile) java.io.RandomAccessFile(file,"r").use { input ->
+                val start=(input.length()-64*1024).coerceAtLeast(0)
+                input.seek(start)
+                val tail=ByteArray((input.length()-start).toInt())
+                input.readFully(tail)
+                tail.toString(Charsets.UTF_8).lineSequence().drop(if(start>0)1 else 0).filter { it.isNotBlank() }.forEach {
+                    val line=it.take(2048);lines.addLast(line);bytes+=line.length*2
+                }
+            }
+        }
+    }
     private val writer = Thread({
         while (!closed.get() || queue.isNotEmpty()) {
             val line = queue.poll(250,TimeUnit.MILLISECONDS) ?: continue
