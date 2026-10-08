@@ -23,7 +23,13 @@ background_location = permissions['android.permission.ACCESS_BACKGROUND_LOCATION
 assert android + 'maxSdkVersion' not in background_location.attrib
 board_service = next(x for x in root.findall('application/service')
                      if x.attrib.get(android + 'name') == 'com.shilapi.xcertplay.board.BoardService')
-assert 'location' in board_service.attrib[android + 'foregroundServiceType'].split('|')
+service_types = board_service.attrib[android + 'foregroundServiceType']
+# apkanalyzer can render Android flag attributes as numeric values.
+if 'location' in service_types.split('|'):
+    has_location_type = True
+else:
+    has_location_type = bool(int(service_types, 0) & 0x8)  # ServiceInfo LOCATION
+assert has_location_type, service_types
 print('PASS: headless P2P location permission survives preview SDK parsing')
 
 assert not any('CarPlayHostActivity' in x or 'MyCarAppService' in x for x in components)
