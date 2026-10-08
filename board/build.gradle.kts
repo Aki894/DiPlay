@@ -1,4 +1,11 @@
 plugins { alias(libs.plugins.android.application) }
+val stageBoardSources = tasks.register<Sync>("stageBoardSources") {
+    from("../common/src/main/java") {
+        include("com/shilapi/xcertplay/AirPlayPersistence.kt", "com/shilapi/xcertplay/DiPlayBootstrap.kt",
+            "com/shilapi/xcertplay/DiPlayBluetooth.kt")
+    }
+    into(layout.buildDirectory.dir("generated/board-sources"))
+}
 android {
     namespace = "com.shilapi.xcertplay.board"
     compileSdk = 37
@@ -20,10 +27,8 @@ android {
     }
     buildTypes { getByName("debug") { isDebuggable = true } }
     sourceSets.getByName("main") {
-        java.srcDir("../common/src/main/java")
-        java.include("com/shilapi/xcertplay/board/**", "com/shilapi/xcertplay/AirPlayPersistence.kt",
-            "com/shilapi/xcertplay/DiPlayBootstrap.kt", "com/shilapi/xcertplay/DiPlayBluetooth.kt")
-        providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull?.let { assets.srcDir(it) }
+        java.directories.add(layout.buildDirectory.dir("generated/board-sources").get().asFile.path)
+        providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull?.let { assets.directories.add(it) }
     }
     buildFeatures { buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_11; targetCompatibility = JavaVersion.VERSION_11 }
@@ -44,3 +49,5 @@ val verifyStandalone by tasks.registering {
     }
 }
 tasks.register("assembleStandaloneDebug") { dependsOn(verifyStandalone, "assembleDebug") }
+
+tasks.named("preBuild") { dependsOn(stageBoardSources) }

@@ -40,10 +40,11 @@ class BoardService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("board_bridge","CarPlay bridge",NotificationManager.IMPORTANCE_LOW))
         startForeground(1,Notification.Builder(this,"board_bridge")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setContentTitle("WuKong CarPlay Bridge")
+            .setSmallIcon(android.R.drawable.stat_notify_sync).setContentTitle("WuKong CarPlay Bridge")
             .setContentText("Background bridge and local management").setOngoing(true).build())
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"WuKong:Session")
         wake.setReferenceCounted(false)
+        BoardConfig.restoreUnconfirmed(this)
         web = BoardWebServer(this,BoardConfig.load(this).webLan).also { it.start(5000,false) }
         discovery = CarLifeVideoBridge(this,onTargetChanged = { next -> actor.post {
             if (target != next) { target = next; if (desired) replaceSession() }

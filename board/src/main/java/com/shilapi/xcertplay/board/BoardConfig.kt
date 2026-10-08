@@ -27,6 +27,13 @@ data class BoardConfig(
         .put("microphone", microphone).put("autoStart", autoStart).put("webLan", webLan).put("p2pChannel", p2pChannel)
         .put("ssid", ssid).put("band", band).also { if (revealSecret) it.put("passphrase", passphrase) }
     companion object {
+        fun restoreUnconfirmed(c: Context) {
+            val prefs=c.getSharedPreferences("board",0)
+            prefs.getString("previous",null)?.let {
+                save(c,parse(JSONObject(it)))
+                check(prefs.edit().remove("previous").putInt("revision",prefs.getInt("revision",0)+1).commit())
+            }
+        }
         fun parse(j: JSONObject): BoardConfig {
             val allowed = setOf("wireless","phone","hotspotMode","width","height","fps","microphone","autoStart","webLan","p2pChannel","ssid","passphrase","band")
             require(j.keys().asSequence().all { it in allowed }) { "Unknown setting" }

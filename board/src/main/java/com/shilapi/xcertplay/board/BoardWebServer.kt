@@ -10,18 +10,11 @@ import java.util.UUID
 class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD(if(lan) "0.0.0.0" else "127.0.0.1",8765) {
     private val token=BoardConfig.token(service).toByteArray()
     private val lock=Any()
-    private var pending: String?=null
+    @Volatile private var pending: String?=null
     private var previous: BoardConfig?=null
     private val timer=java.util.concurrent.ScheduledThreadPoolExecutor(1)
     private var rollback: java.util.concurrent.ScheduledFuture<*>?=null
     private val prefs=service.getSharedPreferences("board",0)
-    init {
-        // A restart during a provisional network change restores the last confirmed configuration.
-        prefs.getString("previous",null)?.let { saved ->
-            BoardConfig.save(service,BoardConfig.parse(JSONObject(saved)))
-            prefs.edit().remove("previous").commit()
-        }
-    }
     override fun stop() { super.stop(); rollback?.cancel(false); timer.shutdownNow() }
     override fun serve(session: IHTTPSession): Response {
         try {
@@ -34,7 +27,7 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                 return json(Response.Status.FORBIDDEN,JSONObject().put("error","Cross-origin request rejected"))
             val body=if(session.method==Method.POST) {
                 require(session.headers["content-type"].orEmpty().startsWith("application/json")) { "JSON required" }
-                require(session.headers["content-length"]?.toIntOrNull() in 0..8192) { "Invalid request size" }
+                require((session.headers["content-length"]?.toIntOrNull() ?: -1) in 0..8192) { "Invalid request size" }
                 val parsed=HashMap<String,String>(); session.parseBody(parsed)
                 JSONObject(parsed["postData"] ?: "{}")
             } else JSONObject()
@@ -59,7 +52,7 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                     if(!nextJson.has("passphrase")) nextJson.put("passphrase",old.passphrase)
                     val next=BoardConfig.parse(nextJson)
                     previous=old; pending=UUID.randomUUID().toString()
-                    prefs.edit().putString("previous",old.json(true).toString()).putInt("revision",prefs.getInt("revision",0)+1).commit()
+                    check(prefs.edit().putString("previous",old.json(true).toString()).putInt("revision",prefs.getInt("revision",0)+1).commit())
                     BoardConfig.save(service,next); service.configChanged()
                     val lease=pending
                     rollback=timer.schedule({ synchronized(lock) { if(pending==lease) restore() } },60,java.util.concurrent.TimeUnit.SECONDS)
