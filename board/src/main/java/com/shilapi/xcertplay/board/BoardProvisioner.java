@@ -153,7 +153,7 @@ public final class BoardProvisioner {
     }
     private static void allowOp(String pkg,String op) throws Exception {
         int uid=context.getPackageManager().getApplicationInfo(pkg,0).uid;
-        if(context.getSystemService(AppOpsManager.class).unsafeCheckOpNoThrow("android:"+op.toLowerCase(java.util.Locale.ROOT),uid,pkg)!=AppOpsManager.MODE_ALLOWED)
+        if(Build.VERSION.SDK_INT<29 || context.getSystemService(AppOpsManager.class).unsafeCheckOpNoThrow("android:"+op.toLowerCase(java.util.Locale.ROOT),uid,pkg)!=AppOpsManager.MODE_ALLOWED)
             run("/system/bin/cmd","appops","set",pkg,op,"allow");
     }
     private static void grantMissing(String pkg,String name) throws Exception {
