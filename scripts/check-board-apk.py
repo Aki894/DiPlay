@@ -16,6 +16,16 @@ android = '{http://schemas.android.com/apk/res/android}'
 assert root.attrib['package'] == 'com.shihab.diplay.hudtest'
 components = [x.attrib.get(android + 'name', '') for tag in ['activity', 'service', 'receiver'] for x in root.findall('application/' + tag)]
 assert 'com.shilapi.xcertplay.board.BoardService' in components
+# Tiramisu preview permission parsing can use a resource SDK newer than SDK_INT.
+# Do not cap the declaration at 32: the root helper must be able to grant it.
+permissions = {x.attrib[android + 'name']: x for x in root.findall('uses-permission')}
+background_location = permissions['android.permission.ACCESS_BACKGROUND_LOCATION']
+assert android + 'maxSdkVersion' not in background_location.attrib
+board_service = next(x for x in root.findall('application/service')
+                     if x.attrib.get(android + 'name') == 'com.shilapi.xcertplay.board.BoardService')
+assert 'location' in board_service.attrib[android + 'foregroundServiceType'].split('|')
+print('PASS: headless P2P location permission survives preview SDK parsing')
+
 assert not any('CarPlayHostActivity' in x or 'MyCarAppService' in x for x in components)
 assert not root.findall('.//category[@' + android + 'name="android.intent.category.LAUNCHER"]')
 with zipfile.ZipFile(apk) as z:
