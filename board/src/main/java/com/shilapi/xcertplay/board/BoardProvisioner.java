@@ -112,6 +112,12 @@ public final class BoardProvisioner {
         for(String pkg:new String[]{PHONE,CAR}) {
             String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"POST_NOTIFICATIONS"};
             for(String permission:perms) run("/system/bin/pm","grant",pkg,"android.permission."+permission);
+            // Wi-Fi Direct on the pinned SDK 32 build checks location AppOps.
+            // A displayless service starts from boot/web, so grant background
+            // access AFTER coarse/fine instead of fighting PermissionManager's
+            // per-UID foreground mode with temporary appops overrides.
+            if(pkg.equals(PHONE) && Build.VERSION.SDK_INT>=29 && Build.VERSION.SDK_INT<=32)
+                run("/system/bin/pm","grant",pkg,"android.permission.ACCESS_BACKGROUND_LOCATION");
             run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
             run("/system/bin/cmd","appops","set",pkg,"RUN_IN_BACKGROUND","allow");
         }
