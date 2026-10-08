@@ -158,8 +158,9 @@ public final class BoardProvisioner {
                     registerPairingReceiver();
                     pairingReceiverReady=true;
                 }
-                pairingUntil=SystemClock.elapsedRealtime()+120000;
                 setDiscoverable(true);
+                pairingUntil=SystemClock.elapsedRealtime()+120000;
+                result="discoverable requested for 120 seconds";
                 new Handler(Looper.getMainLooper()).postDelayed(()->{if(SystemClock.elapsedRealtime()>=pairingUntil)try{setDiscoverable(false);}catch(Exception ignored){}},120000);
             } else if("pair-stop".equals(command)) {pairingUntil=0;setDiscoverable(false);}
             else if(command.matches("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")) {
@@ -172,7 +173,12 @@ public final class BoardProvisioner {
             else if("reboot".equals(command)) run("/system/bin/reboot");
             else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
             else result="unsupported action";
-        } catch(Exception e) {result="failed: "+e.getClass().getSimpleName();}
+        } catch(Exception e) {
+            Throwable cause=rootCause(e);
+            if("pair".equals(command))pairingUntil=0;
+            result="failed: "+cause.getClass().getSimpleName()+": "+String.valueOf(cause.getMessage());
+            android.util.Log.w("WuKongProvision","Maintenance "+command+" failed",cause);
+        }
         File temp=File.createTempFile("maintenance-", ".tmp",dir);
         try(FileOutputStream out=new FileOutputStream(temp)){out.write((command+": "+result).getBytes(StandardCharsets.UTF_8));}
         temp.setReadable(true,false);
@@ -180,7 +186,13 @@ public final class BoardProvisioner {
     }
     private static void setDiscoverable(boolean enabled) throws Exception {
         BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
-        BluetoothAdapter.class.getMethod("setScanMode",int.class).invoke(adapter,enabled?BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:BluetoothAdapter.SCAN_MODE_CONNECTABLE);
+        if(adapter==null || !adapter.isEnabled())
+            throw new IllegalStateException("Bluetooth is not ON; cannot change discoverability");
+        Object status=BluetoothAdapter.class.getMethod("setScanMode",int.class).invoke(adapter,
+                enabled?BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:BluetoothAdapter.SCAN_MODE_CONNECTABLE);
+        // Android 13 returns BluetoothStatusCodes.SUCCESS (0), not a void result.
+        if(!(status instanceof Integer) || ((Integer)status)!=BluetoothStatusCodes.SUCCESS)
+            throw new IOException("Bluetooth setScanMode rejected, status="+status);
     }
     private static void display(boolean enabled) throws Exception {
         Class<?> surface=Class.forName("android.view.SurfaceControl");
