@@ -15,7 +15,7 @@ public final class RootBootDiagnostics {
     private static final String PHONE="com.shihab.diplay.hudtest";
     private static final File ROOT=new File("/data/vendor/wukong-boot");
     private static final AtomicBoolean busy=new AtomicBoolean();
-    private static final String[] ROOT_FILES={"boot-id","stages.tsv","logcat.txt","logcat.txt.1","logcat.txt.2",
+    private static final String[] ROOT_FILES={"boot-id","stages.tsv","logcat.txt","logcat.txt.1","logcat.txt.2","logcat-first.txt",
         "kernel-first.txt","kernel-final.txt","properties-first.txt","properties-final.txt","provision.jsonl","capture-finished","startup-summary.json"};
     private static final String[] APP_FILES={"board.log","board.log.1","board.log.2","board-health.jsonl",
         "board-health.previous.jsonl","board-startup.json"};
