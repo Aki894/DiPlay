@@ -2,7 +2,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('board/src/main/assets/index.html','utf8');
 const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const nodes=new Map(),button={disabled:false};
+const nodes=new Map(),button={disabled:false,command:''};
 function node(id){if(!nodes.has(id))nodes.set(id,{value:'',checked:false,hidden:false,textContent:'',dataset:{},querySelectorAll:()=>[button],replaceChildren(){},add(){}});return nodes.get(id);}
 let calls=[],mode='ok',desired=true;
 const config={revision:25,wireless:true,autoStart:false,microphone:false,webLan:false,width:800,height:480,fps:30,p2pChannel:0,ssid:'',hotspotMode:'WIFI_P2P',band:'GHZ_2_4',phone:''};
@@ -21,16 +21,24 @@ const context=vm.createContext({
   return {ok:true,status:200,json:async()=>data};
  }
 });
+context.window=context;context.__button=button;
 vm.runInContext(script,context);
+function clickSession(action){
+ const handler=[...html.matchAll(/onclick="([^"]+)"/g)].map(m=>m[1]).find(s=>s.endsWith("('"+action+"')"));
+ assert.ok(handler,'Missing session button '+action);
+ // HTML inline handlers resolve element properties before global names.
+ // Modern buttons have a string command property, which masked command().
+ return vm.runInContext('with(__button){'+handler+'}',context);
+}
 (async()=>{
  node('token').value='test-token';node('side').value='both';
  await vm.runInContext('login()',context);
  assert.equal(button.disabled,false);
- await vm.runInContext("command('stop')",context);
+ await clickSession('stop');
  assert.equal(JSON.parse(node('status').textContent).requested,false);
  assert.deepEqual(JSON.parse(calls.find(c=>c.url.endsWith('session/stop')).options.body),{side:'both'});
  mode='offline';
- await vm.runInContext("command('start')",context);
+ await clickSession('start');
  assert.equal(button.disabled,true);
  assert.match(node('connection').textContent,/请求未确认/);
  const posts=calls.filter(c=>c.options.method==='POST').length;
