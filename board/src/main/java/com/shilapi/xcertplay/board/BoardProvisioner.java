@@ -23,6 +23,13 @@ public final class BoardProvisioner {
         Looper.prepareMainLooper();
         Class<?> thread=Class.forName("android.app.ActivityThread");
         Object main=thread.getMethod("systemMain").invoke(null);
+        // systemMain creates the Context without attaching an application to AMS.
+        // This helper is nevertheless a separate Binder client, not system_server.
+        // UsbDevice/UsbAccessory reject remote IUsbSerialReader proxies when isSystem()
+        // is true. Restore the correct client flag before receiving any USB parcel.
+        Field systemThread=thread.getDeclaredField("mSystemThread");
+        systemThread.setAccessible(true);
+        systemThread.setBoolean(main,false);
         context=(Context)thread.getMethod("getSystemContext").invoke(main);
         provision();
         // USB authorization must run even if optional Bluetooth setup is unavailable.
