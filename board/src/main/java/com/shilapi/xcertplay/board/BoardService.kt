@@ -35,10 +35,16 @@ class BoardService : Service() {
     private var retiring: CarPlayController? = null
     private var attempts = 0
     private val retry = Runnable { if (desired) replaceSession() }
+    private val pairingReceiver = BoardPairingReceiver()
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onCreate() {
         super.onCreate(); instance = this
         thread.start(); actor = Handler(thread.looper); log = BoardLog(this)
+        val pairingFilter=IntentFilter(android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST)
+        // A managed application supplies its real package/UID to broadcast delivery.
+        if(Build.VERSION.SDK_INT>=33) registerReceiver(pairingReceiver,pairingFilter,Context.RECEIVER_EXPORTED)
+        else registerReceiver(pairingReceiver,pairingFilter)
+        log.add("Application pairing receiver ready")
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("board_bridge","CarPlay bridge",NotificationManager.IMPORTANCE_LOW))
         updateForeground(null)
@@ -78,11 +84,13 @@ class BoardService : Service() {
     }
     fun request(command: String) {
         require(command in setOf("start","stop","reconnect"))
+        log.add("Session command queued: $command")
         actor.post {
+            log.add("Session command executing: $command")
             desired = command != "stop"
             getSharedPreferences("board",0).edit().putBoolean("requested",desired).apply()
             actor.removeCallbacks(retry)
-            if (desired) replaceSession() else { closeSession(); updateForeground(null); state = "idle" }
+            if (desired) replaceSession() else { state="stopping"; error=""; closeSession(); updateForeground(null); state = "idle" }
         }
     }
     fun configChanged() { actor.post { if (desired) replaceSession() } }
@@ -190,6 +198,7 @@ class BoardService : Service() {
             .put("permissionsMissing",JSONArray(missingPermissions(BoardConfig.load(this))))
             .put("carLife",CarLifeControl.status(this))
             .put("maintenance",runCatching { File(filesDir,"maintenance-result").readText().take(256) }.getOrDefault("root helper not yet used"))
+            .put("pairing",BoardPairingReceiver.status(this))
     }
     fun maintenance(action: String) {
         require(action in setOf("reboot","pair","pair-stop","display-off","display-on") || Regex("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(action))
@@ -197,7 +206,7 @@ class BoardService : Service() {
         log.add("Maintenance requested: $action")
     }
     override fun onDestroy() {
-        instance=null; web?.stop(); discovery?.close(); discovery=null
+        instance=null; unregisterReceiver(pairingReceiver); web?.stop(); discovery?.close(); discovery=null
         actor.removeCallbacksAndMessages(null)
         actor.post { closeSession(); log.close(); thread.quitSafely() }
         super.onDestroy()
@@ -228,3 +237,4 @@ class BoardUsbActivity : Activity() {
         finish()
     }
 }
+

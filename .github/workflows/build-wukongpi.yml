@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 scripts/check_public_tree.py
           python3 scripts/check_generic_receiver.py
+          node scripts/check-board-web.cjs
           ./gradlew :shared:testDebugUnitTest :board:testDebugUnitTest :board:lintDebug :board:assembleDebug --stacktrace
       - name: Parse Windows installers
         shell: pwsh
@@ -62,3 +63,4 @@ jobs:
       - name: Clean temporary authentication inputs
         if: always()
         run: rm -rf "$RUNNER_TEMP/diplay-runtime-assets" "$RUNNER_TEMP/DiPlay-upstream.apk" "$RUNNER_TEMP/bridge-debug.b64" "$RUNNER_TEMP/bridge-debug.keystore"
+

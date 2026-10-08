@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>悟空派 CarPlay 管理</title>
-<style>body{font:16px system-ui;margin:24px auto;max-width:880px;padding:0 16px;background:#111827;color:#e5e7eb}section{background:#1f2937;padding:18px;margin:16px 0;border-radius:12px}button,input,select{font:inherit;padding:8px;margin:4px;border-radius:6px}button{cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}label{display:inline-block;margin:6px}#error{color:#fca5a5}</style>
-<h1>悟空派 CarPlay 桥接</h1><p>管理页面关闭后，后台连接继续运行。</p><section id="login"><label>管理令牌 <input id="token" type="password" autocomplete="off"></label><button onclick="login()">连接</button></section><p id="error" role="alert"></p>
+<style>body{font:16px system-ui;margin:24px auto;max-width:880px;padding:0 16px;background:#111827;color:#e5e7eb}section{background:#1f2937;padding:18px;margin:16px 0;border-radius:12px}button,input,select{font:inherit;padding:8px;margin:4px;border-radius:6px}button{cursor:pointer}button:disabled{cursor:wait;opacity:.5}#connection{padding:10px;border-radius:6px;background:#374151}#connection[data-online="false"]{color:#fca5a5}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}label{display:inline-block;margin:6px}#error{color:#fca5a5}</style>
+<h1>悟空派 CarPlay 桥接</h1><p>管理页面关闭后，后台连接继续运行。</p><section id="login"><label>管理令牌 <input id="token" type="password" autocomplete="off"></label><button onclick="login()">连接</button></section><p id="connection" role="status" data-online="false">尚未连接后端</p><button onclick="login()">重新连接管理页面</button><p id="error" role="alert"></p>
 <div id="panel" hidden><section><h2>连接</h2><label>对象 <select id="side"><option value="both">手机和车机</option><option value="phone">手机</option><option value="car">车机</option></select></label><button onclick="command('start')">开始</button><button onclick="command('stop')">停止</button><button onclick="command('reconnect')">重新连接</button><pre id="status"></pre></section>
 <section><h2>设置</h2><label><input id="wireless" type="checkbox">无线 CarPlay</label><label><input id="autoStart" type="checkbox">开机连接</label><label><input id="microphone" type="checkbox">开发板麦克风上行（实测后开启）</label><br>
 <label>手机 <select id="phone"><option value="">自动选择已配对手机</option></select></label><button onclick="maintenance('pair')">允许配对 120 秒</button><button onclick="maintenance('pair-stop')">结束配对</button><button onclick="phones()">刷新手机</button><button onclick="forgetPhone()">移除所选蓝牙配对</button><br>
@@ -10,21 +10,53 @@
 <section><h2>车机音频</h2><label><input id="usbMedia" type="checkbox" checked>USB 媒体音频</label><label><input id="ttsCompat" type="checkbox">TTS 兼容路径</label><label>TTS 采样率 <select id="ttsRate"><option>48000</option><option>16000</option><option>24000</option><option>32000</option><option>44100</option></select></label><button onclick="carConfig()">应用并重连车机</button></section>
 <section><h2>诊断与维护</h2><button onclick="logs()">读取最近日志</button><button onclick="download()">导出诊断</button><button onclick="maintenance('display-off')">关闭显示输出</button><button onclick="maintenance('display-on')">恢复显示输出</button><button onclick="reboot()">重启设备</button><button onclick="logout()">退出管理</button><pre id="log"></pre></section></div>
 <script>
+let online=false,busy=false;
 let auth=sessionStorage.getItem('bridgeToken')||'',revision=0,pending='',timer,polling=false,carLoaded=false;const $=id=>document.getElementById(id);
-async function api(path,body){let r=await fetch('/api/v1/'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+auth,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});let j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
-async function run(fn){try{$('error').textContent='';return await fn()}catch(e){$('error').textContent=e.message}}
-async function login(){auth=$('token').value||auth;await run(async()=>{await load();sessionStorage.setItem('bridgeToken',auth);$('login').hidden=true;$('panel').hidden=false;clearInterval(timer);timer=setInterval(()=>{if(!document.hidden&&!polling)run(status)},2000);await status();await phones()})}
+function connection(ok,message){online=ok;$('connection').dataset.online=String(ok);$('connection').textContent=message;buttons();}
+function buttons(){for(let b of $('panel').querySelectorAll('button'))b.disabled=!online||busy;}
+async function request(path,body,raw=false){
+ const abort=new AbortController(),timeout=setTimeout(()=>abort.abort(),8000);
+ try{
+  let r=await fetch('/api/v1/'+path,{method:body===undefined?'GET':'POST',cache:'no-store',signal:abort.signal,headers:{Authorization:'Bearer '+auth,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+  if(r.status===401){connection(false,'管理令牌失效，请重新连接');$('login').hidden=false;throw Error('Management token required');}
+  let j=raw&&r.ok?await r.blob():await r.json();
+  connection(true,'后端已连接 · '+new Date().toLocaleTimeString());
+  if(!r.ok)throw Error(j.error||r.status);
+  return j;
+ }catch(e){
+  if(e.name==='AbortError'||e instanceof TypeError){
+   let message=body===undefined?'后端连接中断，显示的数据可能已过期。正在自动检查连接。':'请求未确认，操作可能已执行。恢复连接后请检查状态，不会自动重复操作。';
+   connection(false,message);throw Error(message);
+  }
+  throw e;
+ }finally{clearTimeout(timeout);}
+}
+async function api(path,body){return request(path,body);}
+async function run(fn){
+ if(busy)return;
+ busy=true;buttons();$('error').textContent='';
+ try{return await fn()}catch(e){$('error').textContent=e.message}
+ finally{busy=false;buttons();}
+}
+async function watch(){if(document.hidden||polling||busy)return;try{await status()}catch(e){if(online)$('error').textContent=e.message;}}
+async function login(){
+ auth=$('token').value||auth;
+ clearInterval(timer);timer=setInterval(watch,2000);
+ await run(async()=>{await load();sessionStorage.setItem('bridgeToken',auth);$('login').hidden=true;$('panel').hidden=false;await status();await loadPhones();});
+}
 async function load(){let c=await api('config');revision=c.revision;for(let k of ['wireless','autoStart','microphone','webLan'])$(k).checked=c[k];for(let k of ['width','height','fps','p2pChannel','ssid','hotspotMode','band'])$(k).value=c[k];$('phone').dataset.selected=c.phone;$('passphrase').value=''}
 async function status(){polling=true;try{let s=await api('status');$('status').textContent=JSON.stringify(s,null,2);pending=s.pendingConfig||'';let c=s.carLife?.settings;if(c&&!carLoaded){$('usbMedia').checked=c.usbMedia;$('ttsCompat').checked=c.ttsCompatibility;$('ttsRate').value=c.ttsRate;carLoaded=true;}}finally{polling=false;}}
-function command(c){run(async()=>{$('log').textContent=JSON.stringify(await api('session/'+c,{side:$('side').value}),null,2);await status()})}
+function command(c){return run(async()=>{$('log').textContent='正在发送：'+c;let r=await api('session/'+c,{side:$('side').value});$('log').textContent='后端已接收 '+c+'，正在等待会话状态更新。\n'+JSON.stringify(r,null,2);await status();})}
 function save(){run(async()=>{let c={};for(let k of ['wireless','autoStart','microphone','webLan'])c[k]=$(k).checked;for(let k of ['width','height','fps','p2pChannel'])c[k]=Number($(k).value);for(let k of ['phone','ssid','hotspotMode','band'])c[k]=$(k).value;if($('passphrase').value)c.passphrase=$('passphrase').value;let r=await api('config',{revision,config:c});pending=r.confirmId;revision++;$('pending').textContent='60 秒内确认，否则自动恢复。配置标识：'+pending;})}
 function confirmConfig(){run(async()=>{await api('config/confirm',{confirmId:pending});pending='';$('pending').textContent='已确认';await load()})}
 function restore(){run(async()=>{await api('config/restore',{});pending='';$('pending').textContent='已恢复';await load()})}
-async function phones(){await run(async()=>{let j=await api('phones');$('phone').replaceChildren(new Option('自动选择已配对手机',''));for(let p of j.phones)$('phone').add(new Option(p.name+' '+p.address,p.address));$('phone').value=$('phone').dataset.selected||''})}
+async function loadPhones(){let j=await api('phones');$('phone').replaceChildren(new Option('自动选择已配对手机',''));for(let p of j.phones)$('phone').add(new Option(p.name+' '+p.address,p.address));$('phone').value=$('phone').dataset.selected||''}
+function phones(){return run(loadPhones);}
 function forgetPhone(){let address=$('phone').value;if(!address){$('error').textContent='先选择具体手机';return}if(confirm('停止手机会话并移除该蓝牙配对？手机端 CarPlay 记录需要在手机上管理。'))run(()=>api('phones/forget',{address}))}
-function maintenance(action){run(()=>api('maintenance',{action}))}function reboot(){if(confirm('重启会中断当前连接，继续？'))maintenance('reboot')}
+function maintenance(action){return run(async()=>{await api('maintenance',{action});$('log').textContent='维护请求已提交：'+action+'；执行结果见状态。';await status();})}function reboot(){if(confirm('重启会中断当前连接，继续？'))maintenance('reboot')}
 function carConfig(){run(()=>api('car/config',{usbMedia:$('usbMedia').checked,ttsCompatibility:$('ttsCompat').checked,ttsRate:Number($('ttsRate').value)}))}
 function logs(){run(async()=>{$('log').textContent=(await api('logs')).lines.join('\n')})}
-async function download(){await run(async()=>{let r=await fetch('/api/v1/diagnostics/export',{headers:{Authorization:'Bearer '+auth}});if(!r.ok)throw Error('导出失败');let u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='wukong-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)})}
-function logout(){clearInterval(timer);auth='';sessionStorage.removeItem('bridgeToken');$('panel').hidden=true;$('login').hidden=false;$('token').value=''}if(auth)login();
+async function download(){await run(async()=>{let u=URL.createObjectURL(await request('diagnostics/export',undefined,true)),a=document.createElement('a');a.href=u;a.download='wukong-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)})}
+function logout(){clearInterval(timer);connection(false,'已退出管理');auth='';sessionStorage.removeItem('bridgeToken');$('panel').hidden=true;$('login').hidden=false;$('token').value=''}if(auth)login();
 </script></html>
+

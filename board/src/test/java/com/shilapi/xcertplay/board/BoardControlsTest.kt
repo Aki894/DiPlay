@@ -70,4 +70,48 @@ class BoardControlsTest {
             assertTrue(log.json().length()<=100)
         } finally { log.close() }
     }
+    @Test fun pairingRequestsRequireAnOpenWindowAndConfirmationVariant() {
+        val service=Robolectric.buildService(BoardService::class.java).get()
+        val window=java.io.File(service.filesDir,"pairing-window")
+        val request=java.io.File(service.filesDir,"pairing-request")
+        request.delete()
+        window.writeText("120100")
+        assertFalse(BoardPairingReceiver.queue(service,"AA:BB:CC:DD:EE:FF",0,100)) // PIN input
+        assertFalse(BoardPairingReceiver.queue(service,"AA:BB:CC:DD:EE:FF",1,100)) // Passkey input
+        assertFalse(BoardPairingReceiver.queue(service,"bad-address",2,100))
+        assertFalse(request.exists())
+        assertTrue(BoardPairingReceiver.queue(service,"AA:BB:CC:DD:EE:FF",2,100))
+        val queued=JSONObject(request.readText())
+        assertEquals("AA:BB:CC:DD:EE:FF",queued.getString("address"))
+        assertEquals(2,queued.getInt("variant"))
+        assertEquals(120100L,queued.getLong("until"))
+        request.delete()
+        assertFalse(BoardPairingReceiver.queue(service,"AA:BB:CC:DD:EE:FF",3,120100))
+        window.writeText("0")
+        assertFalse(BoardPairingReceiver.queue(service,"AA:BB:CC:DD:EE:FF",3,100))
+        assertFalse(request.exists())
+    }
+    @Test fun idleHttpConnectionsCannotBlockControlRequests() {
+        val service=Robolectric.buildService(BoardService::class.java).get()
+        val server=BoardWebServer(service,false)
+        val sockets=mutableListOf<java.net.Socket>()
+        try {
+            server.start(5000,false)
+            repeat(3) {
+                val socket=java.net.Socket("127.0.0.1",8765).also { sockets.add(it); it.soTimeout=1500 }
+                socket.getOutputStream().write("GET /api/v1/status HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nConnection: keep-alive\r\n\r\n".toByteArray())
+                val reader=socket.getInputStream().bufferedReader()
+                assertTrue(reader.readLine().contains("401"))
+                var close=false
+                while(true) {
+                    val line=reader.readLine() ?: break
+                    if(line.isEmpty())break
+                    if(line.equals("Connection: close",ignoreCase=true))close=true
+                }
+                assertTrue("Response must release the bounded HTTP worker",close)
+                // Leave the first two client sockets open, as a browser would.
+            }
+        } finally { sockets.forEach { it.close() };server.stop() }
+    }
 }
+

@@ -50,7 +50,7 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
             } else JSONObject()
             val result=when {
                 session.method==Method.GET && session.uri=="/api/v1/status" -> {
-                    CarLifeControl.call(service,"status")
+                    CarLifeControl.refresh(service)
                     service.status().put("configRevision",prefs.getInt("revision",0)).put("pendingConfig",pending)
                 }
                 session.method==Method.GET && session.uri=="/api/v1/config" -> BoardConfig.load(service).json().put("revision",prefs.getInt("revision",0))
@@ -87,8 +87,8 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                     val command=session.uri.substringAfterLast('/')
                     require(command in setOf("start","stop","reconnect"))
                     val side=body.optString("side","both"); require(side in setOf("phone","car","both"))
-                    val car=if(side!="phone") CarLifeControl.call(service,command) else JSONObject()
                     if(side!="car") service.request(command)
+                    val car=if(side!="phone") CarLifeControl.call(service,command) else JSONObject()
                     JSONObject().put("accepted",true).put("car",car)
                 }
                 session.method==Method.POST && session.uri=="/api/v1/car/config" -> CarLifeControl.call(service,"config",body)
@@ -115,7 +115,10 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
     }
     private fun json(status: Response.Status,value: JSONObject)=response(status,"application/json",value.toString())
     private fun response(status: Response.Status,mime: String,text: String)=newFixedLengthResponse(status,mime,text).apply {
+        // Only two workers: idle browser keep-alive sockets must not occupy both.
+        closeConnection(true)
         addHeader("Cache-Control","no-store"); addHeader("X-Content-Type-Options","nosniff")
         addHeader("Content-Security-Policy","default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
     }
 }
+
