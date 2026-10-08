@@ -34,6 +34,11 @@ class BoardService : Service() {
     private lateinit var wake: PowerManager.WakeLock
     @Volatile private var retiring: CarPlayController? = null
     private var attempts = 0
+    @Volatile private var sessionStarts = 0
+    @Volatile private var onCreateReadyMs: Long? = null
+    @Volatile private var firstSessionStartMs: Long? = null
+    @Volatile private var firstHotspotReadyMs: Long? = null
+    private val bootId by lazy { runCatching { File("/proc/sys/kernel/random/boot_id").readText().trim() }.getOrDefault("unknown") }
     private val serviceStartedMs = SystemClock.elapsedRealtime()
     @Volatile private var firstActiveMs: Long? = null
     private lateinit var health: BoardHealth
@@ -64,9 +69,14 @@ class BoardService : Service() {
         BoardConfig.restoreUnconfirmed(this)
         web = BoardWebServer(this,BoardConfig.load(this).webLan).also { it.start(5000,false) }
         discovery = CarLifeVideoBridge(this,onTargetChanged = { next -> actor.post {
-            if (target != next) { target = next; if (desired) replaceSession() }
+            if (target != next) {
+                log.add("Car target changed old=${target?.let { "${it.width}x${it.height}@${it.fps}" }} new=${next?.let { "${it.width}x${it.height}@${it.fps}" }}; rebuildRequested=$desired")
+                target = next; if (desired) replaceSession()
+            }
         } })
-        log.add("Service ready elapsedMs=$serviceStartedMs; preview disabled; API on port 8765")
+        onCreateReadyMs=SystemClock.elapsedRealtime()
+        recordStartup()
+        log.add("Service ready elapsedMs=$onCreateReadyMs; objectCreatedMs=$serviceStartedMs; preview disabled; API on port 8765")
         actor.post(healthTick)
     }
     private fun updateForeground(config: BoardConfig?) {
@@ -166,7 +176,7 @@ class BoardService : Service() {
                 hostMac=deviceId.split(":").map { it.toInt(16).toByte() }.toByteArray(),
                 transport=if(cfg.wireless) CarPlayTransport.WIRELESS else CarPlayTransport.WIRED,
                 wirelessBluetoothDeviceAddress=cfg.phone.ifBlank { null },
-                wirelessHotspotMode=WirelessHotspotMode.valueOf(cfg.hotspotMode),wifiP2pPreferredChannel=cfg.p2pChannel,
+                wirelessHotspotMode=WirelessHotspotMode.valueOf(cfg.hotspotMode),wifiP2pPreferredChannel=cfg.p2pChannel,wirelessAllow5GHz=false,
                 manualHotspotSsid=cfg.ssid,manualHotspotPassphrase=cfg.passphrase,
                 manualHotspotBand=ManualHotspotBand.valueOf(cfg.band))
             val listener = object : AirPlaySessionListener {
@@ -181,12 +191,19 @@ class BoardService : Service() {
                     state=next.javaClass.simpleName
                     if(state=="WirelessActive") {attempts=0;markActive()}
                     if(next is CarPlayStatus.Failed) fail(next.message, !next.wifiResetRequired)
-                    if(next is CarPlayStatus.HotspotReady) log.add("Hotspot ready address=${next.address} backend=${next.backend} band=${next.band}")
+                    if(next is CarPlayStatus.HotspotReady) {
+                        if(firstHotspotReadyMs==null)firstHotspotReadyMs=SystemClock.elapsedRealtime()
+                        recordStartup()
+                        log.add("Hotspot ready address=${next.address} backend=${next.backend} band=${next.band}")
+                    }
                 } } },loadPairRecord={ AirPlayPersistence.loadLockdownRecord(this) },
                 savePairRecord={ AirPlayPersistence.saveLockdownRecord(this,it) },clearPairRecord={ AirPlayPersistence.clearLockdownRecord(this) })
             wake.acquire(30*60*1000L)
             actor.postDelayed(renewWake,10*60*1000L)
             state="starting"; error=""
+            sessionStarts++
+            if(firstSessionStartMs==null)firstSessionStartMs=SystemClock.elapsedRealtime()
+            recordStartup()
             controller!!.start()
             log.add("Session generation=$gen ${width}x$height fps=$fps wireless=${cfg.wireless} forwardOnly=true")
         } catch (e: Exception) { closeSession(); fail("${e.javaClass.simpleName}: ${e.message}") }
@@ -194,8 +211,19 @@ class BoardService : Service() {
     private val renewWake = object : Runnable { override fun run() {
         if(desired && controller!=null) { wake.acquire(30*60*1000L); actor.postDelayed(this,10*60*1000L) }
     } }
+    private fun startupSnapshot()=JSONObject().put("bootId",bootId).put("serviceObjectCreatedMs",serviceStartedMs)
+        .put("onCreateReadyMs",onCreateReadyMs).put("firstSessionStartMs",firstSessionStartMs)
+        .put("firstHotspotReadyMs",firstHotspotReadyMs).put("firstCarPlayActiveMs",firstActiveMs)
+        .put("sessionStarts",sessionStarts)
+    private fun recordStartup() {
+        runCatching {
+            val temp=File.createTempFile("startup-",".tmp",filesDir)
+            try {temp.writeText(startupSnapshot().toString());check(temp.renameTo(File(filesDir,"board-startup.json")))}
+            finally {temp.delete()}
+        }.onFailure {log.add("Startup metadata write failed: ${it.javaClass.simpleName}")}
+    }
     private fun markActive() {
-        if(firstActiveMs==null) {firstActiveMs=SystemClock.elapsedRealtime();log.add("First CarPlay active elapsedMs=$firstActiveMs")}
+        if(firstActiveMs==null) {firstActiveMs=SystemClock.elapsedRealtime();recordStartup();log.add("First CarPlay active elapsedMs=$firstActiveMs")}
     }
     private fun waitReady(message: String) {
         state="waiting-for-board";error=message
@@ -218,6 +246,11 @@ class BoardService : Service() {
         sink?.let { runCatching { it.close() } }; sink=null
         if(wake.isHeld) wake.release()
     }
+    fun bootExportStatus(): JSONObject = runCatching {
+        val file=File(filesDir,"boot-export-status.json")
+        if(!file.isFile || file.length()>4096 || java.nio.file.Files.isSymbolicLink(file.toPath()))return@runCatching JSONObject().put("state","not-captured")
+        JSONObject(file.readText())
+    }.getOrElse {JSONObject().put("state","error").put("error","Unreadable export metadata")}
     fun healthExport()=health.export()
     fun diagnosticStatus()=status().also { snapshot ->
         snapshot.optJSONObject("management")?.optJSONObject("maintenanceHotspot")?.remove("passphrase")
@@ -235,9 +268,9 @@ class BoardService : Service() {
             .put("carLife",CarLifeControl.status(this))
             .put("maintenance",runCatching { File(filesDir,"maintenance-result").readText().take(256) }.getOrDefault("root helper not yet used"))
             .put("pairing",BoardPairingReceiver.status(this))
-            .put("boot",JSONObject().put("serviceReadyMs",serviceStartedMs).put("firstCarPlayActiveMs",firstActiveMs)
+            .put("boot",startupSnapshot().put("serviceReadyMs",serviceStartedMs)
                 .put("userUnlocked",getSystemService(UserManager::class.java).isUserUnlocked))
-            .put("health",health.summary())
+            .put("health",health.summary()).put("bootExport",bootExportStatus())
             .put("management",management())
     }
     private fun management(): JSONObject = JSONObject().put("lanEnabled",BoardConfig.load(this).webLan)
@@ -256,7 +289,7 @@ class BoardService : Service() {
         actor.removeCallbacks(retry);closeSession();closeMaintenance()
         val cfg=BoardConfig.load(this)
         BoardConfig.save(this,cfg.copy(webLan=true))
-        val group=com.shilapi.xcertplay.network.WifiP2pGroupManager(this,log::add,0)
+        val group=com.shilapi.xcertplay.network.WifiP2pGroupManager(this,log::add,0,allow5GHz=false)
         maintenanceGroup=group;state="maintenance-starting";error=""
         Thread({
             try {
@@ -277,8 +310,9 @@ class BoardService : Service() {
     fun maintenance(action: String) {
         if(action=="maintenance-ap") {actor.post { runCatching { startMaintenance() }.onFailure {state="error";error=it.message.orEmpty()} };return}
         if(action=="maintenance-stop") {request("start");return}
-        require(action in setOf("reboot","pair","pair-stop","display-off","display-on") || Regex("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(action))
-        File(filesDir,"maintenance-request").writeText(action)
+        require(action in setOf("reboot","pair","pair-stop","display-off","display-on") || Regex("boot-export:[0-9a-f]{12}").matches(action) || Regex("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(action))
+        val request=File.createTempFile("maintenance-request-",".tmp",filesDir)
+        try {request.writeText(action);check(request.renameTo(File(filesDir,"maintenance-request")))}finally{request.delete()}
         log.add("Maintenance requested: $action")
     }
     override fun onDestroy() {

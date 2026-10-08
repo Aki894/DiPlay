@@ -47,7 +47,7 @@ class BoardLog(c: Context) {
     },"board-metadata").apply { isDaemon=true; start() }
     @Synchronized fun add(message: String) {
         if (closed.get() || message.startsWith("TRACE ")) return
-        val line = "${System.currentTimeMillis()} ${message.take(1024).replace(redact,"$1=<redacted>")}"
+        val line = "${System.currentTimeMillis()} elapsedMs=${android.os.SystemClock.elapsedRealtime()} ${message.take(1024).replace(redact,"$1=<redacted>")}"
         lines.addLast(line); bytes += line.length * 2
         while (bytes > 256 * 1024) bytes -= lines.removeFirst().length * 2
         android.util.Log.i("WuKongBridge",line)

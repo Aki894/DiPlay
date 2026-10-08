@@ -6,6 +6,29 @@ import org.junit.Test
 import java.io.IOException
 
 class P2pStartupRecoveryTest {
+    @Test fun twoGhzRadioFiltersRememberedAndAlignedFiveGhz() {
+        val remembered=P2pCreationRequest(P2pCreationMode.FIXED_5_GHZ,5745)
+        assertEquals(listOf(2437,2412,2462,null),
+            P2pStartupRecovery.plan(5180,remembered,allow5GHz=false).map {it.frequencyMHz})
+        assertEquals(listOf(2462,2437,2412,null),
+            P2pStartupRecovery.plan(2462,allow5GHz=false).map {it.frequencyMHz})
+    }
+    @Test fun unsupportedManualChannelCannotReachDriver() {
+        assertThrows(IllegalArgumentException::class.java) {
+            P2pStartupRecovery.create(null,{},preferredChannel=149,allow5GHz=false) {fail("Driver called")}
+        }
+        assertEquals(2437,P2pStartupRecovery.create(null,{},preferredChannel=6,allow5GHz=false) {}.frequencyMHz)
+    }
+    @Test fun twoGhzRejectionsStillReachSystemDefault() {
+        val tried=mutableListOf<Int?>()
+        val result=P2pStartupRecovery.create(null,{},allow5GHz=false) {
+            tried+=it.frequencyMHz
+            if(it.frequencyMHz!=null)throw P2pCreateRejected(WifiP2pManager.ERROR,"rejected")
+        }
+        assertEquals(listOf(2437,2412,2462,null),tried)
+        assertEquals(P2pCreationMode.SYSTEM_DEFAULT,result.mode)
+    }
+
     @Test fun manualChannelOverridesStationAndRememberedConfiguration() {
         val remembered = P2pCreationRequest(P2pCreationMode.SYSTEM_DEFAULT)
         for ((channel, frequency) in listOf(1 to 2412, 6 to 2437, 11 to 2462,

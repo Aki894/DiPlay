@@ -8,7 +8,7 @@
 <label>SSID <input id="ssid" maxlength="32"></label><label>热点密码 <input id="passphrase" type="password" placeholder="留空保留现有密码"></label><br>
 <label>测试宽度 <input id="width" type="number"></label><label>高度 <input id="height" type="number"></label><label>FPS <input id="fps" type="number" min="10" max="60"></label><p>连接车机后优先使用车机协商尺寸。此处不改变 scrcpy 分辨率。</p><label><input id="webLan" type="checkbox">允许本地网络访问（即时生效，需要管理令牌）</label><br><button onclick="save()">应用候选配置</button><button onclick="confirmConfig()">确认连接正常</button><button onclick="restore()">恢复上次配置</button><p id="pending"></p></section>
 <section><h2>车机音频</h2><label><input id="usbMedia" type="checkbox" checked>USB 媒体音频</label><label><input id="ttsCompat" type="checkbox">TTS 兼容路径</label><label>TTS 采样率 <select id="ttsRate"><option>48000</option><option>16000</option><option>24000</option><option>32000</option><option>44100</option></select></label><button onclick="carConfig()">应用并重连车机</button></section>
-<section><h2>诊断与维护</h2><button onclick="maintenance('maintenance-ap')">开启维护热点（暂停 CarPlay）</button><button onclick="maintenance('maintenance-stop')">结束维护并恢复 CarPlay</button><button onclick="logs()">读取最近日志</button><button onclick="download()">导出诊断</button><button onclick="maintenance('display-off')">关闭显示输出</button><button onclick="maintenance('display-on')">恢复显示输出</button><button onclick="reboot()">重启设备</button><button onclick="logout()">退出管理</button><pre id="log"></pre></section></div>
+<section><h2>诊断与维护</h2><button onclick="maintenance('maintenance-ap')">开启维护热点（暂停 CarPlay）</button><button onclick="maintenance('maintenance-stop')">结束维护并恢复 CarPlay</button><button onclick="logs()">读取最近日志</button><button onclick="download()">导出应用诊断</button><button onclick="bootLogs()">保存并下载系统启动日志</button><button onclick="maintenance('display-off')">关闭显示输出</button><button onclick="maintenance('display-on')">恢复显示输出</button><button onclick="reboot()">重启设备</button><button onclick="logout()">退出管理</button><pre id="log"></pre></section></div>
 <script>
 let online=false,busy=false;
 let auth=sessionStorage.getItem('bridgeToken')||'',revision=0,pending='',timer,polling=false,carLoaded=false;const $=id=>document.getElementById(id);
@@ -57,6 +57,22 @@ function maintenance(action){return run(async()=>{await api('maintenance',{actio
 function carConfig(){run(()=>api('car/config',{usbMedia:$('usbMedia').checked,ttsCompatibility:$('ttsCompat').checked,ttsRate:Number($('ttsRate').value)}))}
 function logs(){run(async()=>{$('log').textContent=(await api('logs')).lines.join('\n')})}
 async function download(){await run(async()=>{let u=URL.createObjectURL(await request('diagnostics/export',undefined,true)),a=document.createElement('a');a.href=u;a.download='wukong-diagnostics.txt';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)})}
+async function bootLogs(){await run(async()=>{
+ const capture=await api('diagnostics/boot/capture',{}),deadline=Date.now()+60000;
+ $('log').textContent='正在保存系统日志，请保持供电和 Wi-Fi 连接。';
+ while(Date.now()<deadline){
+  await new Promise(resolve=>setTimeout(resolve,1000));
+  const result=await api('diagnostics/boot/status');
+  if(result.requestId!==capture.requestId)continue;
+  if(result.state==='error')throw Error(result.error||'系统日志保存失败');
+  if(result.state==='ready'){
+   const u=URL.createObjectURL(await request('diagnostics/boot/download',undefined,true)),a=document.createElement('a');
+   a.href=u;a.download='wukong-boot-diagnostics.zip';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
+   $('log').textContent='日志已保存并下载，包含可用的本次和上次启动记录。';return;
+  }
+ }
+ throw Error('保存尚未确认。请检查 bootExport 和 maintenance 状态；不要拔掉电源。');
+})}
 function logout(){clearInterval(timer);connection(false,'已退出管理');auth='';sessionStorage.removeItem('bridgeToken');$('panel').hidden=true;$('login').hidden=false;$('token').value=''}if(auth)login();
 </script></html>
 

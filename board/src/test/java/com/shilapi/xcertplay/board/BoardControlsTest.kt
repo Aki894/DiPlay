@@ -60,6 +60,29 @@ class BoardControlsTest {
             assertEquals(NanoHTTPD.Response.Status.NOT_FOUND,server.serve(request("/api/v1/shell",NanoHTTPD.Method.GET,mapOf("authorization" to auth))).status)
         } finally { server.stop() }
     }
+    @Test fun bootArchiveRequiresAuthenticationReadyStatusAndRegularFile() {
+        val service=Robolectric.buildService(BoardService::class.java).get()
+        val server=BoardWebServer(service,false)
+        val auth=mapOf("authorization" to "Bearer "+BoardConfig.token(service))
+        val archive=java.io.File(service.filesDir,"boot-diagnostics.zip")
+        val metadata=java.io.File(service.filesDir,"boot-export-status.json")
+        val uri="/api/v1/diagnostics/boot/download"
+        try {
+            archive.delete();metadata.delete()
+            assertEquals(NanoHTTPD.Response.Status.UNAUTHORIZED,server.serve(request(uri,NanoHTTPD.Method.GET,emptyMap())).status)
+            assertEquals(NanoHTTPD.Response.Status.BAD_REQUEST,server.serve(request(uri,NanoHTTPD.Method.GET,auth)).status)
+            archive.writeBytes(byteArrayOf(80,75,3,4))
+            metadata.writeText("{\"state\":\"capturing\"}")
+            assertEquals(NanoHTTPD.Response.Status.BAD_REQUEST,server.serve(request(uri,NanoHTTPD.Method.GET,auth)).status)
+            metadata.writeText("{\"state\":\"ready\"}")
+            server.serve(request(uri,NanoHTTPD.Method.GET,auth)).also {
+                assertEquals(NanoHTTPD.Response.Status.OK,it.status);it.data.close()
+            }
+            archive.delete()
+            java.nio.file.Files.createSymbolicLink(archive.toPath(),metadata.toPath())
+            assertEquals(NanoHTTPD.Response.Status.BAD_REQUEST,server.serve(request(uri,NanoHTTPD.Method.GET,auth)).status)
+        } finally {archive.delete();metadata.delete();server.stop()}
+    }
     @Test fun lanAccessChangesWithoutRebindingAndStillRequiresToken() {
         val service=Robolectric.buildService(BoardService::class.java).get()
         BoardConfig.save(service,BoardConfig(webLan=false))

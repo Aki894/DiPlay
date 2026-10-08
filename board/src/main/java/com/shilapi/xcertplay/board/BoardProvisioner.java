@@ -20,6 +20,7 @@ public final class BoardProvisioner {
     @android.annotation.SuppressLint({"SoonBlockedPrivateApi","BlockedPrivateApi"})
     public static void main(String[] args) throws Exception {
         if(android.os.Process.myUid()!=0) throw new SecurityException("Root provisioning only");
+        event("helper_main");
         Looper.prepareMainLooper();
         Class<?> thread=Class.forName("android.app.ActivityThread");
         Object main=thread.getMethod("systemMain").invoke(null);
@@ -44,15 +45,23 @@ public final class BoardProvisioner {
         samplingConfig.setAccessible(true);
         samplingConfig.set(null,noSampling);
         android.util.Log.i("WuKongProvision","Root AppOps stack sampling disabled");
-        pairingWindow(0);
+        if(context.getSystemService(UserManager.class).isUserUnlocked())pairingWindow(0);
+        // Radio requests do not depend on CE secrets or application grants.
+        startRadio("wifi");
+        startRadio("bluetooth");
+        event("waiting_user_unlock");
         new Thread(() -> {
             while(true) {
                 try {
                     if(!context.getSystemService(UserManager.class).isUserUnlocked()) {Thread.sleep(1000);continue;}
-                    provision();
-                    bluetoothAddress();
-                    run("/system/bin/am","start-foreground-service","-n",PHONE+"/com.shilapi.xcertplay.board.BoardService","--es","command","boot");
-                    run("/system/bin/am","start-foreground-service","-n",CAR+"/.BoardSessionService","--es","command","start");
+                    event("user_unlocked");
+                    provisionPhonePermissions();event("phone_permissions_ready");
+                    runChecked("/system/bin/am","start-foreground-service","-n",PHONE+"/com.shilapi.xcertplay.board.BoardService","--es","command","boot");
+                    event("phone_service_requested");
+                    // Noncritical maintenance cannot delay the phone service request.
+                    provisionMaintenance();
+                    runChecked("/system/bin/am","start-foreground-service","-n",CAR+"/.BoardSessionService","--es","command","start");
+                    event("car_service_requested");
                     android.util.Log.i("WuKongProvision","Provisioning ready elapsedMs="+SystemClock.elapsedRealtime());
                     break;
                 } catch(Exception e) {android.util.Log.w("WuKongProvision","Provisioning retry",e);}
@@ -63,6 +72,7 @@ public final class BoardProvisioner {
         Handler handler=new Handler(Looper.getMainLooper());
         handler.post(new Runnable() { public void run() {
             for(int task=0;task<3;task++) try {
+                if(!context.getSystemService(UserManager.class).isUserUnlocked())continue;
                 if(task==0)grantUsb();else if(task==1)bluetoothAddress();else {maintenance();confirmPairing();}
             } catch(Exception e) {
                 long now=SystemClock.elapsedRealtime();
@@ -123,33 +133,71 @@ public final class BoardProvisioner {
         writePairingFile("pairing-result","failed: "+cause.getClass().getSimpleName()+": "+String.valueOf(cause.getMessage()));
         android.util.Log.w("WuKongProvision","Pair confirmation failed",cause);
     }
-    private static void run(String... args) throws Exception {
-        java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).redirectOutput(new File("/dev/null")).start();
-        if(!p.waitFor(20,java.util.concurrent.TimeUnit.SECONDS)) {
-            p.destroyForcibly();throw new IOException("Provisioning command timed out: "+args[0]);
+    private static void event(String name) { RootBootDiagnostics.event(name); }
+    private static void run(String... args) throws Exception { command(false,args); }
+    private static void runChecked(String... args) throws Exception { command(true,args); }
+    private static void command(boolean checked,String... args) throws Exception {
+        long begin=SystemClock.elapsedRealtime();
+        String label=String.join(" ",args);
+        event("command_start "+label);
+        RootBootDiagnostics.CommandResult result=RootBootDiagnostics.execute(20,4096,args);
+        if(!result.done) {
+            event("command_timeout durationMs="+(SystemClock.elapsedRealtime()-begin)+" "+label);
+            throw new IOException("Provisioning command timed out: "+args[0]);
         }
-        if(p.exitValue()!=0) android.util.Log.w("WuKongProvision","Command unavailable: "+args[0]+" "+args[1]);
+        event("command_end durationMs="+(SystemClock.elapsedRealtime()-begin)+" exit="+result.exit+" "+label);
+        if(result.exit!=0) {
+            event("command_error "+label+" output="+result.output);
+            if(checked)throw new IOException("Required provisioning command failed exit="+result.exit+": "+label);
+            android.util.Log.w("WuKongProvision","Optional command failed: "+label);
+        }
     }
-    private static void provision() throws Exception {
+
+    private static void startRadio(String radio) {
+        new Thread(() -> {
+            long requestedAt=0;
+            while(true)try {
+                boolean on,off;
+                if(radio.equals("wifi")) {
+                    android.net.wifi.WifiManager wifi=context.getSystemService(android.net.wifi.WifiManager.class);
+                    if(wifi==null)throw new IOException("Wi-Fi framework not ready");
+                    on=wifi.isWifiEnabled();off=wifi.getWifiState()==android.net.wifi.WifiManager.WIFI_STATE_DISABLED;
+                } else {
+                    BluetoothManager manager=context.getSystemService(BluetoothManager.class);
+                    BluetoothAdapter adapter=manager==null?null:manager.getAdapter();
+                    if(adapter==null)throw new IOException("Bluetooth framework not ready");
+                    on=adapter.isEnabled();off=adapter.getState()==BluetoothAdapter.STATE_OFF;
+                }
+                if(on) {event(radio+"_observed_on");return;}
+                if(requestedAt==0 || (off && SystemClock.elapsedRealtime()-requestedAt>=30000)) {
+                    runChecked("/system/bin/svc",radio,"enable");
+                    requestedAt=SystemClock.elapsedRealtime();event(radio+"_enable_requested");
+                }
+                // Do not spam enable while a slow controller is initializing.
+                Thread.sleep(1000);
+            } catch(Exception e) {
+                android.util.Log.w("WuKongProvision",radio+" readiness retry",e);
+                try {Thread.sleep(3000);}catch(InterruptedException interrupted){return;}
+            }
+        },"board-"+radio).start();
+    }
+    private static void provisionPhonePermissions() throws Exception {
+        for(String permission:new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"})
+            grantMissing(PHONE,permission);
+        if(Build.VERSION.SDK_INT>=29 && Build.VERSION.SDK_INT<=32)grantMissing(PHONE,"ACCESS_BACKGROUND_LOCATION");
+    }
+    private static void provisionMaintenance() throws Exception {
+        grantMissing(CAR,"POST_NOTIFICATIONS");
         for(String pkg:new String[]{PHONE,CAR}) {
-            String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"POST_NOTIFICATIONS"};
-            for(String permission:perms) grantMissing(pkg,permission);
-            // Wi-Fi Direct on the pinned SDK 32 build checks location AppOps.
-            // A displayless service starts from boot/web, so grant background
-            // access AFTER coarse/fine instead of fighting PermissionManager's
-            // per-UID foreground mode with temporary appops overrides.
-            if(pkg.equals(PHONE) && Build.VERSION.SDK_INT>=29 && Build.VERSION.SDK_INT<=32)
-                grantMissing(pkg,"ACCESS_BACKGROUND_LOCATION");
             if(!context.getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(pkg))
                 run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
             allowOp(pkg,"RUN_IN_BACKGROUND");
         }
         allowOp(PHONE,"ACTIVATE_VPN");
-        if(context.getPackageManager().getApplicationEnabledSetting("com.android.mtp")!=android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
-            run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
-        BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
-        if(adapter!=null && !adapter.isEnabled())run("/system/bin/svc","bluetooth","enable");
-        if(!context.getSystemService(android.net.wifi.WifiManager.class).isWifiEnabled())run("/system/bin/svc","wifi","enable");
+        try {
+            if(context.getPackageManager().getApplicationEnabledSetting("com.android.mtp")!=android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
+                run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
+        } catch(IllegalArgumentException absent) {event("mtp_package_absent");}
     }
     private static void allowOp(String pkg,String op) throws Exception {
         int uid=context.getPackageManager().getApplicationInfo(pkg,0).uid;
@@ -165,7 +213,9 @@ public final class BoardProvisioner {
         String[] requested=context.getPackageManager().getPackageInfo(pkg,android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions;
         if(requested==null || !java.util.Arrays.asList(requested).contains(permission))return;
         if(context.getPackageManager().checkPermission(permission,pkg)==android.content.pm.PackageManager.PERMISSION_GRANTED)return;
-        run("/system/bin/pm","grant","--user","0",pkg,permission);
+        runChecked("/system/bin/pm","grant","--user","0",pkg,permission);
+        if(context.getPackageManager().checkPermission(permission,pkg)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+            throw new SecurityException("Permission grant not effective: "+permission);
     }
     private static Object usb() throws Exception {
         IBinder binder=(IBinder)Class.forName("android.os.ServiceManager").getMethod("getService",String.class).invoke(null,"usb");
@@ -239,6 +289,7 @@ public final class BoardProvisioner {
                     result=after==BluetoothDevice.BOND_NONE?"unpaired":"removal requested";
                 }
             }
+            else if(command.matches("boot-export:[0-9a-f]{12}")) {RootBootDiagnostics.request(context,command.substring(12));result="capture queued";}
             else if("reboot".equals(command)) run("/system/bin/reboot");
             else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
             else result="unsupported action";

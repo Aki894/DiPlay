@@ -40,6 +40,7 @@ class WifiP2pGroupManager(
     context: Context,
     private val diagnostic: (String) -> Unit = {},
     private val preferredChannel: Int = WifiP2pChannels.AUTO,
+    private val allow5GHz: Boolean = true,
 ) : WirelessHotspotManager {
     init {
         require(WifiP2pChannels.isValid(preferredChannel)) { "Unsupported Wi-Fi Direct channel: $preferredChannel" }
@@ -106,6 +107,7 @@ class WifiP2pGroupManager(
         }
         require(timeoutMillis > 0) { "timeoutMillis must be positive" }
 
+        diagnostic("BOOT_STAGE p2p_start elapsedMs=${android.os.SystemClock.elapsedRealtime()} allow5GHz=$allow5GHz")
         val attempt = StartAttempt()
         synchronized(stateLock) {
             check(!closed) { "WifiP2pGroupManager is closed" }
@@ -170,6 +172,7 @@ class WifiP2pGroupManager(
                 stationFrequency = stationFrequency,
                 preferred = preferred?.request,
                 preferredChannel = preferredChannel,
+                allow5GHz = allow5GHz,
                 beforeRetry = {
                     ensureStartActive(attempt)
                     // Do not cancel discovery, toggle Wi-Fi, or remove a newly observed group.
@@ -232,6 +235,7 @@ class WifiP2pGroupManager(
             if (!ownership.edit().putString("owned_ssid", group.ssid).commit()) {
                 throw IOException("Could not record Wi-Fi P2P group ownership")
             }
+            diagnostic("BOOT_STAGE p2p_ready elapsedMs=${android.os.SystemClock.elapsedRealtime()}")
             diagnostic("Wi-Fi P2P ready mode=${creation.mode} band=${group.bandLabel} channel=${group.channel} frequencyMHz=${group.frequencyMHz}")
             diagnostic("Wi-Fi P2P channel requestedMHz=${creation.frequencyMHz ?: "auto"} actualMHz=${group.frequencyMHz} matched=${creation.frequencyMHz?.let { it == group.frequencyMHz } ?: "system_selected"}")
             if (preferredChannel != WifiP2pChannels.AUTO && group.frequencyMHz != creation.frequencyMHz) {

@@ -57,6 +57,22 @@ class BoardWebServer(private val service: BoardService,@Suppress("UNUSED_PARAMET
                 }
                 session.method==Method.GET && session.uri=="/api/v1/config" -> BoardConfig.load(service).json().put("revision",prefs.getInt("revision",0))
                 session.method==Method.GET && session.uri=="/api/v1/logs" -> JSONObject().put("lines",service.log.json())
+                session.method==Method.GET && session.uri=="/api/v1/diagnostics/boot/status" -> service.bootExportStatus()
+                session.method==Method.POST && session.uri=="/api/v1/diagnostics/boot/capture" -> {
+                    val id=UUID.randomUUID().toString().replace("-","").take(12)
+                    service.maintenance("boot-export:$id")
+                    JSONObject().put("accepted",true).put("requestId",id)
+                }
+                session.method==Method.GET && session.uri=="/api/v1/diagnostics/boot/download" -> {
+                    val file=java.io.File(service.filesDir,"boot-diagnostics.zip")
+                    require(file.isFile && file.length() in 1..(8L*1024*1024) && !java.nio.file.Files.isSymbolicLink(file.toPath())) {"Capture system logs first"}
+                    require(service.bootExportStatus().optString("state")=="ready") {"Capture not ready"}
+                    return newFixedLengthResponse(Response.Status.OK,"application/zip",file.inputStream(),file.length()).apply {
+                        closeConnection(true);addHeader("Cache-Control","no-store")
+                        addHeader("X-Content-Type-Options","nosniff")
+                        addHeader("Content-Disposition","attachment; filename=wukong-boot-diagnostics.zip")
+                    }
+                }
                 session.method==Method.GET && session.uri=="/api/v1/diagnostics/export" -> return response(Response.Status.OK,"text/plain",
                     service.diagnosticStatus().toString(2)+"\n"+service.log.export()+"\nHEALTH\n"+service.healthExport())
                 session.method==Method.GET && session.uri=="/api/v1/phones" -> {

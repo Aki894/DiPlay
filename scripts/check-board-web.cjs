@@ -4,12 +4,13 @@ const html=fs.readFileSync('board/src/main/assets/index.html','utf8');
 const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const nodes=new Map(),button={disabled:false,command:''};
 function node(id){if(!nodes.has(id))nodes.set(id,{value:'',checked:false,hidden:false,textContent:'',dataset:{},querySelectorAll:()=>[button],replaceChildren(){},add(){}});return nodes.get(id);}
-let calls=[],mode='ok',desired=true;
+let calls=[],mode='ok',desired=true,downloads=[],captureId='012345abcdef';
 const config={revision:25,wireless:true,autoStart:false,microphone:false,webLan:false,width:800,height:480,fps:30,p2pChannel:0,ssid:'',hotspotMode:'WIFI_P2P',band:'GHZ_2_4',phone:''};
 const context=vm.createContext({
- document:{getElementById:node,hidden:false},sessionStorage:{getItem:()=>'',setItem(){},removeItem(){}},
+ document:{getElementById:node,hidden:false,createElement:()=>({click(){downloads.push(this.download)}})},sessionStorage:{getItem:()=>'',setItem(){},removeItem(){}},
+ URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},
  AbortController,TypeError,Date,JSON,Number,String,Error,Option:function(){},
- setTimeout:(fn,ms)=>setTimeout(fn,ms===8000?20:ms),clearTimeout,setInterval:()=>1,clearInterval(){},confirm:()=>true,
+ setTimeout:(fn,ms)=>setTimeout(fn,ms===8000?20:ms===1000?1:ms),clearTimeout,setInterval:()=>1,clearInterval(){},confirm:()=>true,
  fetch:async(url,options)=>{
   calls.push({url,options});
   if(mode==='timeout')return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>{let e=new Error('aborted');e.name='AbortError';reject(e);}));
@@ -17,8 +18,8 @@ const context=vm.createContext({
   const path=url.split('/api/v1/')[1];
   if(path==='session/stop')desired=false;
   if(path==='session/start')desired=true;
-  const data=path==='config'?config:path==='phones'?{phones:[]}:path==='status'?{state:desired?'WirelessActive':'idle',requested:desired,generation:2,carLife:{settings:{usbMedia:true,ttsCompatibility:false,ttsRate:48000}}}:{accepted:true};
-  return {ok:true,status:200,json:async()=>data};
+  const data=path==='diagnostics/boot/capture'?{accepted:true,requestId:captureId}:path==='diagnostics/boot/status'?{state:'ready',requestId:captureId}:path==='config'?config:path==='phones'?{phones:[]}:path==='status'?{state:desired?'WirelessActive':'idle',requested:desired,generation:2,carLife:{settings:{usbMedia:true,ttsCompatibility:false,ttsRate:48000}}}:{accepted:true};
+  return {ok:true,status:200,json:async()=>data,blob:async()=>({})};
  }
 });
 context.window=context;context.__button=button;
@@ -50,5 +51,9 @@ function clickSession(action){
  assert.match(node('connection').textContent,/可能已过期/);
  mode='ok';await vm.runInContext('watch()',context);
  assert.equal(button.disabled,false);
+ await vm.runInContext('bootLogs()',context);
+ assert.deepEqual(downloads,['wukong-boot-diagnostics.zip']);
+ assert.equal(calls.filter(c=>c.url.endsWith('diagnostics/boot/capture')).length,1,'Capture requested exactly once');
+ assert.ok(calls.find(c=>c.url.endsWith('diagnostics/boot/download')));
  console.log('Board web checks passed: stop, bounded timeout, recovery, no mutation replay');
 })().catch(e=>{console.error(e);process.exitCode=1;});

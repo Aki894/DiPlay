@@ -1793,7 +1793,7 @@ class CarPlayController(
         }
         val manager: WirelessHotspotManager = when (hotspotMode) {
             WirelessHotspotMode.WIFI_P2P -> WifiP2pGroupManager(appContext, ::debugLog,
-                preferredChannel = config.wifiP2pPreferredChannel)
+                preferredChannel = config.wifiP2pPreferredChannel, allow5GHz = config.wirelessAllow5GHz)
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> LocalOnlyHotspotManager(appContext, ::debugLog)
             WirelessHotspotMode.MANUAL -> ManualHotspotManager(
                 context = appContext,
@@ -2176,9 +2176,10 @@ class CarPlayController(
     }
 
     private fun debugLog(message: String) {
-        Log.i(IphoneCarPlayConfiguration.TAG, message)
+        val timed = "elapsedMs=${android.os.SystemClock.elapsedRealtime()} $message"
+        Log.i(IphoneCarPlayConfiguration.TAG, timed)
         try {
-            uiListener?.onDebugLog(message)
+            uiListener?.onDebugLog(timed)
         } catch (error: Exception) {
             Log.w(IphoneCarPlayConfiguration.TAG, "debug log callback failed", error)
         }

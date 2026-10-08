@@ -14,8 +14,8 @@ android {
         applicationId = "com.shihab.diplay.hudtest"
         minSdk = 28
         targetSdk = 33 // Appliance is pinned to Android 13; do not inherit newer boot restrictions.
-        versionCode = 39
-        versionName = "0.2.11-wukongpi.3"
+        versionCode = 40
+        versionName = "0.2.11-wukongpi.4"
         ndk { abiFilters += "armeabi-v7a" }
     }
     signingConfigs {

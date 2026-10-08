@@ -25,8 +25,9 @@ internal object P2pStartupRecovery {
 
     /** A band-only request still needs channel selection, which some BYD drivers cannot do. */
     fun plan(stationFrequency: Int?, preferred: P2pCreationRequest? = null,
-             preferredChannel: Int = WifiP2pChannels.AUTO): List<P2pCreationRequest> = buildList {
+             preferredChannel: Int = WifiP2pChannels.AUTO, allow5GHz: Boolean = true): List<P2pCreationRequest> = buildList {
         WifiP2pChannels.frequencyMhz(preferredChannel)?.let {
+            require(allow5GHz || it < 5000) { "Channel $preferredChannel is unsupported by this 2.4 GHz radio" }
             add(P2pCreationRequest(P2pCreationMode.PREFERRED_CHANNEL, it))
             return@buildList
         }
@@ -35,6 +36,7 @@ internal object P2pStartupRecovery {
         val aligned5 = stationFrequency in listOf(5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825)
         val frequencies = mutableSetOf<Int>()
         fun channel(mode: P2pCreationMode, frequency: Int) {
+            if (!allow5GHz && frequency >= 5000) return
             if (frequencies.add(frequency)) add(P2pCreationRequest(mode, frequency))
         }
         if (preferred?.mode == P2pCreationMode.SYSTEM_DEFAULT && preferred.frequencyMHz == null) add(preferred)
@@ -56,9 +58,10 @@ internal object P2pStartupRecovery {
         beforeRetry: () -> Unit,
         preferred: P2pCreationRequest? = null,
         preferredChannel: Int = WifiP2pChannels.AUTO,
+        allow5GHz: Boolean = true,
         request: (P2pCreationRequest) -> Unit,
     ): P2pCreationRequest {
-        val modes = plan(stationFrequency, preferred, preferredChannel)
+        val modes = plan(stationFrequency, preferred, preferredChannel, allow5GHz)
         var lastRejection: P2pCreateRejected? = null
         for ((index, mode) in modes.withIndex()) {
             var retriedBusy = false
