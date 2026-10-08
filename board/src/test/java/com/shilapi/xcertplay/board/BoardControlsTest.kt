@@ -35,6 +35,14 @@ class BoardControlsTest {
         assertEquals(confirmed,BoardConfig.load(service))
         assertNull(service.getSharedPreferences("board",0).getString("previous",null))
     }
+    @Test fun interruptedTokenCreationNeverAllowsEmptyAuthentication() {
+        val service=Robolectric.buildService(BoardService::class.java).get()
+        val file=java.io.File(service.noBackupFilesDir,"web-token")
+        file.writeText("")
+        val token=BoardConfig.token(service)
+        assertTrue(Regex("[0-9a-f]{64}").matches(token))
+        assertEquals(token,BoardConfig.token(service))
+    }
     private fun request(uri: String,method: NanoHTTPD.Method,headers: Map<String,String>): NanoHTTPD.IHTTPSession =
         Proxy.newProxyInstance(javaClass.classLoader,arrayOf(NanoHTTPD.IHTTPSession::class.java)) { _,m,_ ->
             when(m.name) { "getUri" -> uri; "getMethod" -> method; "getHeaders" -> headers; else -> null }

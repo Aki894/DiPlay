@@ -19,7 +19,7 @@ data class BoardConfig(
         require(band in setOf("AUTO", "GHZ_2_4", "GHZ_5"))
         require(com.shilapi.xcertplay.network.WifiP2pChannels.isValid(p2pChannel))
         require(ssid.toByteArray().size <= 32 && '\u0000' !in ssid)
-        require(passphrase.isEmpty() || passphrase.length in 8..63)
+        require(passphrase.isEmpty() || (passphrase.length in 8..63 && passphrase.all { it.code in 32..126 }))
         require(hotspotMode != "MANUAL" || (ssid.isNotBlank() && passphrase.length in 8..63))
     }
     fun json(revealSecret: Boolean = false): JSONObject = JSONObject().put("wireless", wireless).put("phone", phone)
@@ -47,15 +47,20 @@ data class BoardConfig(
         fun save(c: Context, config: BoardConfig) {
             check(c.getSharedPreferences("board",0).edit().putString("config",config.json(true).toString()).commit())
         }
-        fun token(c: Context): String {
+        @Synchronized fun token(c: Context): String {
             val file = java.io.File(c.noBackupFilesDir,"web-token")
-            if (!file.exists()) {
-                val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                check(file.createNewFile())
-                file.setReadable(false,false); file.setReadable(true,true)
-                file.writeText(bytes.joinToString("") { "%02x".format(it.toInt() and 255) })
-            }
-            return file.readText().trim()
+            val current=runCatching { file.readText().trim() }.getOrNull()
+            if(current!=null && Regex("[0-9a-f]{64}").matches(current))return current
+            val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            val token=bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
+            val temp=java.io.File.createTempFile("web-token-", ".tmp",c.noBackupFilesDir)
+            try {
+                check(temp.setReadable(false,false) && temp.setReadable(true,true))
+                check(temp.setWritable(false,false) && temp.setWritable(true,true))
+                temp.writeText(token)
+                check(temp.renameTo(file)) { "Cannot save management token" }
+            } finally { temp.delete() }
+            return token
         }
     }
 }
