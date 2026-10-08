@@ -40,9 +40,11 @@ public final class BoardProvisioner {
         Looper.loop();
     }
     private static void run(String... args) throws Exception {
-        java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).start();
-        byte[] buffer=new byte[2048];try(InputStream in=p.getInputStream()) {while(in.read(buffer)>=0) {}}
-        if(p.waitFor()!=0) android.util.Log.w("WuKongProvision","Command unavailable: "+args[0]+" "+args[1]);
+        java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).redirectOutput(new File("/dev/null")).start();
+        if(!p.waitFor(20,java.util.concurrent.TimeUnit.SECONDS)) {
+            p.destroyForcibly();throw new IOException("Provisioning command timed out: "+args[0]);
+        }
+        if(p.exitValue()!=0) android.util.Log.w("WuKongProvision","Command unavailable: "+args[0]+" "+args[1]);
     }
     private static void provision() throws Exception {
         for(String pkg:new String[]{PHONE,CAR}) {

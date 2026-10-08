@@ -24,6 +24,14 @@ jobs:
           python3 scripts/check_public_tree.py
           python3 scripts/check_generic_receiver.py
           ./gradlew :shared:testDebugUnitTest :board:testDebugUnitTest :board:lintDebug :board:assembleDebug --stacktrace
+      - name: Parse Windows installers
+        shell: pwsh
+        run: |
+          foreach ($file in @('scripts/install-wukongpi.ps1','scripts/rollback-wukongpi.ps1')) {
+            $tokens=$null; $errors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file),[ref]$tokens,[ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
       - name: Prepare existing explicit car-test inputs
         run: |
           curl --fail --location --retry 3 'https://raw.githubusercontent.com/Aki894/CarProjection/0760e3b4f5145178d315eaeb1413fc20dba90b78/keystore/carprojection-debug.keystore.b64' -o "$RUNNER_TEMP/bridge-debug.b64"

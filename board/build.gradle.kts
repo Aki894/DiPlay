@@ -25,7 +25,12 @@ android {
             }
         }
     }
-    buildTypes { getByName("debug") { isDebuggable = true } }
+    buildTypes { getByName("debug") {
+        isDebuggable = true
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"),"proguard-rules.pro")
+    } }
     sourceSets.getByName("main") {
         kotlin.directories.add(layout.buildDirectory.dir("generated/board-sources").get().asFile.path)
         providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull?.let { assets.directories.add(it) }
