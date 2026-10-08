@@ -201,6 +201,10 @@ public final class BoardProvisioner {
             else if("reboot".equals(command)) run("/system/bin/reboot");
             else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
             else result="unsupported action";
+        } catch(SecurityException e) {
+            if("pair".equals(command))pairingUntil=0;
+            result="failed: SecurityException: "+String.valueOf(e.getMessage());
+            android.util.Log.w("WuKongProvision","Maintenance "+command+" permission rejected",e);
         } catch(Exception e) {
             Throwable cause=rootCause(e);
             if("pair".equals(command))pairingUntil=0;
