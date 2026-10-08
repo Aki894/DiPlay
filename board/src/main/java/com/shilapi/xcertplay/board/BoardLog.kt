@@ -4,28 +4,42 @@ import android.content.Context
 import org.json.JSONArray
 import java.io.File
 import java.util.ArrayDeque
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
-/** Bounded metadata only. No raw protocol payloads, pairing keys or authentication assets. */
+/** Bounded metadata. Media callbacks never wait for storage and never retain payloads. */
 class BoardLog(c: Context) {
     private val lines = ArrayDeque<String>()
     private var bytes = 0
     private val file = File(c.filesDir,"board.log")
+    private val queue = ArrayBlockingQueue<String>(256)
+    private val closed = AtomicBoolean()
+    val dropped = AtomicLong()
+    private val redact = Regex("(?i)(passphrase|password|token|key)=[^ ,;]+")
+    private val writer = Thread({
+        while (!closed.get() || queue.isNotEmpty()) {
+            val line = queue.poll(250,TimeUnit.MILLISECONDS) ?: continue
+            runCatching {
+                if (file.length() > 2 * 1024 * 1024) {
+                    File(file.parentFile,"board.log.2").delete()
+                    File(file.parentFile,"board.log.1").renameTo(File(file.parentFile,"board.log.2"))
+                    file.renameTo(File(file.parentFile,"board.log.1"))
+                }
+                file.appendText("$line\n")
+            }.onFailure { android.util.Log.w("WuKongBridge","Metadata storage unavailable") }
+        }
+    },"board-metadata").apply { isDaemon=true; start() }
     @Synchronized fun add(message: String) {
-        if (message.startsWith("TRACE ")) return
-        val line = "${System.currentTimeMillis()} ${message.take(1024).replace(Regex("(?i)(passphrase|password|token|key)=[^ ,;]+"),"$1=<redacted>")}"
+        if (closed.get() || message.startsWith("TRACE ")) return
+        val line = "${System.currentTimeMillis()} ${message.take(1024).replace(redact,"$1=<redacted>")}"
         lines.addLast(line); bytes += line.length * 2
         while (bytes > 256 * 1024) bytes -= lines.removeFirst().length * 2
         android.util.Log.i("WuKongBridge",line)
-        // Metadata rate is low; rotate on a worker supplied by the session service.
-        if (file.length() > 2 * 1024 * 1024) {
-            File(cPath(),"board.log.2").delete()
-            File(cPath(),"board.log.1").renameTo(File(cPath(),"board.log.2"))
-            file.renameTo(File(cPath(),"board.log.1"))
-        }
-        runCatching { file.appendText("$line\n") }
+        if (!queue.offer(line)) dropped.incrementAndGet()
     }
-    fun close() = Unit
-    private fun cPath() = file.parentFile!!
+    fun close() { closed.set(true) }
     @Synchronized fun json() = JSONArray(lines.toList().takeLast(100))
     @Synchronized fun export() = lines.joinToString("\n")
 }

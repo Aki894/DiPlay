@@ -27,7 +27,7 @@ android {
     }
     buildTypes { getByName("debug") { isDebuggable = true } }
     sourceSets.getByName("main") {
-        java.directories.add(layout.buildDirectory.dir("generated/board-sources").get().asFile.path)
+        kotlin.directories.add(layout.buildDirectory.dir("generated/board-sources").get().asFile.path)
         providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR").orNull?.let { assets.directories.add(it) }
     }
     buildFeatures { buildConfig = true }

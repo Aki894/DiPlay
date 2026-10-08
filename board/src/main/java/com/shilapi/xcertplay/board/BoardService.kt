@@ -31,6 +31,7 @@ class BoardService : Service() {
     private var discovery: CarLifeVideoBridge? = null
     private var web: BoardWebServer? = null
     private lateinit var wake: PowerManager.WakeLock
+    private var retiring: CarPlayController? = null
     private var attempts = 0
     private val retry = Runnable { if (desired) replaceSession() }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -81,6 +82,10 @@ class BoardService : Service() {
     private fun replaceSession() {
         actor.removeCallbacks(retry); closeSession()
         if (!desired) return
+        retiring?.let {
+            if (!it.awaitClosed(5000)) { fail("Previous transport teardown pending"); return }
+            retiring=null
+        }
         val cfg = BoardConfig.load(this)
         val missing = missingPermissions(cfg)
         if (missing.isNotEmpty()) { fail("Permissions missing: ${missing.joinToString()}"); return }
@@ -143,7 +148,10 @@ class BoardService : Service() {
     private fun closeSession() {
         generation++
         actor.removeCallbacks(renewWake)
-        controller?.let { runCatching { it.close() } }; controller=null
+        controller?.let {
+            runCatching { it.close() }
+            if (!it.awaitClosed(5000)) retiring=it
+        }; controller=null
         sink?.let { runCatching { it.close() } }; sink=null
         if(wake.isHeld) wake.release()
     }
@@ -153,7 +161,7 @@ class BoardService : Service() {
         return JSONObject().put("version",BuildConfig.VERSION_NAME).put("state",state).put("error",error)
             .put("requested",desired).put("generation",generation).put("uptimeMs",SystemClock.elapsedRealtime())
             .put("pssKiB",memory.totalPss).put("heapUsedBytes",Runtime.getRuntime().totalMemory()-Runtime.getRuntime().freeMemory())
-            .put("heapLimitBytes",Runtime.getRuntime().maxMemory()).put("videoFrames",stats[0]).put("videoBytes",stats[1])
+            .put("metadataDropped",log.dropped.get()).put("heapLimitBytes",Runtime.getRuntime().maxMemory()).put("videoFrames",stats[0]).put("videoBytes",stats[1])
             .put("videoDecoders",stats[2]).put("audioStreams",stats[3]).put("preview",stats[2]>0)
             .put("carTarget",target?.let { "${it.width}x${it.height}@${it.fps}" } ?: "not connected")
             .put("permissionsMissing",JSONArray(missingPermissions(BoardConfig.load(this))))

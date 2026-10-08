@@ -146,7 +146,7 @@ class AndroidMediaSink(
     private val videoFrames = AtomicLong()
     private val videoBytes = AtomicLong()
     fun mediaStats(): LongArray = longArrayOf(videoFrames.get(), videoBytes.get(), videoDecoders.size.toLong(), audioRenderers.size.toLong())
-    fun setLocalPreviewEnabled(enabled: Boolean) {
+    @Synchronized fun setLocalPreviewEnabled(enabled: Boolean) {
         localPreviewEnabled = enabled
         if (!enabled) {
             videoDecoders.values.forEach { it.close() }; videoDecoders.clear()
@@ -255,7 +255,7 @@ class AndroidMediaSink(
         pendingVideoCodec[type] = codec
     }
 
-    override fun onVideoConfig(type: Int, codecData: ByteArray) {
+    @Synchronized override fun onVideoConfig(type: Int, codecData: ByteArray) {
         val codec = pendingVideoCodec[type] ?: VideoCodec.H264
         if (type == 110) carLifeVideo?.configure(codec, codecData)
         lastVideoConfig[type] = codec to codecData
@@ -265,7 +265,7 @@ class AndroidMediaSink(
         }
     }
 
-    override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
+    @Synchronized override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
         if (type == 110) carLifeVideo?.submit(naluBytes)
         videoFrames.incrementAndGet(); videoBytes.addAndGet(naluBytes.size.toLong())
         if (localPreviewEnabled) {
@@ -274,7 +274,7 @@ class AndroidMediaSink(
         }
     }
 
-    override fun onScreenStreamActive(type: Int, active: Boolean) {
+    @Synchronized override fun onScreenStreamActive(type: Int, active: Boolean) {
         if (!active) {
             videoRecoveryHandlers.remove(type)
             videoDiagnosticHandlers.remove(type)
@@ -366,7 +366,8 @@ class AndroidMediaSink(
         }
     }
 
-    fun close() {
+    @Synchronized fun close() {
+        localPreviewEnabled=false
         synchronized(screenStateLock) {
             activeScreenTypes.forEach { screenStreamActiveChanged?.invoke(it, false) }
             activeScreenTypes.clear()
