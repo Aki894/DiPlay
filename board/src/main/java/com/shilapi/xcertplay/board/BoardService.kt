@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.*
 import com.shilapi.xcertplay.*
 import com.shilapi.xcertplay.airplay.*
@@ -40,9 +41,7 @@ class BoardService : Service() {
         thread.start(); actor = Handler(thread.looper); log = BoardLog(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel("board_bridge","CarPlay bridge",NotificationManager.IMPORTANCE_LOW))
-        startForeground(1,Notification.Builder(this,"board_bridge")
-            .setSmallIcon(android.R.drawable.stat_notify_sync).setContentTitle("WuKong CarPlay Bridge")
-            .setContentText("Background bridge and local management").setOngoing(true).build())
+        updateForeground(null)
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"WuKong:Session")
         wake.setReferenceCounted(false)
         BoardConfig.restoreUnconfirmed(this)
@@ -51,6 +50,21 @@ class BoardService : Service() {
             if (target != next) { target = next; if (desired) replaceSession() }
         } })
         log.add("Service ready; preview disabled; API on port 8765")
+    }
+    private fun updateForeground(config: BoardConfig?) {
+        val notification = Notification.Builder(this,"board_bridge")
+            .setSmallIcon(android.R.drawable.stat_notify_sync).setContentTitle("WuKong CarPlay Bridge")
+            .setContentText("Background bridge and local management").setOngoing(true).build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Use explicit types: service boot must not activate location/microphone
+            // before provisioning has granted their runtime permissions.
+            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            if (config?.microphone == true) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            if (config?.wireless == true && Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2)
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            startForeground(1,notification,types)
+            log.add("Foreground service types=0x" + types.toString(16))
+        } else startForeground(1,notification)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val command = intent?.getStringExtra("command")
@@ -68,7 +82,7 @@ class BoardService : Service() {
             desired = command != "stop"
             getSharedPreferences("board",0).edit().putBoolean("requested",desired).apply()
             actor.removeCallbacks(retry)
-            if (desired) replaceSession() else { closeSession(); state = "idle" }
+            if (desired) replaceSession() else { closeSession(); updateForeground(null); state = "idle" }
         }
     }
     fun configChanged() { actor.post { if (desired) replaceSession() } }
@@ -77,6 +91,10 @@ class BoardService : Service() {
         if (c.microphone) needed += Manifest.permission.RECORD_AUDIO
         if (c.wireless) needed += listOf(Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.NEARBY_WIFI_DEVICES)
+        // Boot and web requests have no visible Activity. Android 11+ also
+        // restricts location access for foreground services started in background.
+        if (c.wireless && Build.VERSION.SDK_INT in 29..32)
+            needed += Manifest.permission.ACCESS_BACKGROUND_LOCATION
         return needed.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
     }
     private fun replaceSession() {
@@ -91,6 +109,7 @@ class BoardService : Service() {
         if (missing.isNotEmpty()) { fail("Permissions missing: ${missing.joinToString()}"); return }
         if (!cfg.wireless && CarPlayVpnService.prepare(this) != null) { fail("VPN not provisioned; run board installer"); return }
         try {
+            updateForeground(cfg)
             DiPlayBootstrap.ensure(this)
             val identity = AirPlayPersistence.loadIdentity(this)
             val deviceId = DiPlayBootstrap.deviceId(identity)
