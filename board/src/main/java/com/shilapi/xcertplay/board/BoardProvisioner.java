@@ -1,0 +1,120 @@
+package com.shilapi.xcertplay.board;
+
+import android.app.*;
+import android.bluetooth.*;
+import android.content.*;
+import android.hardware.usb.*;
+import android.os.*;
+import java.io.*;
+import java.lang.reflect.*;
+import java.nio.charset.StandardCharsets;
+
+/** Fixed Android 13 root entry point, launched by vendor init, not an HTTP shell. */
+public final class BoardProvisioner {
+    private static final String PHONE="com.shihab.diplay.hudtest",CAR="com.projection.car";
+    private static volatile long pairingUntil;
+    private static Context context;
+    public static void main(String[] args) throws Exception {
+        if(android.os.Process.myUid()!=0) throw new SecurityException("Root provisioning only");
+        Looper.prepareMainLooper();
+        Class<?> thread=Class.forName("android.app.ActivityThread");
+        Object main=thread.getMethod("systemMain").invoke(null);
+        context=(Context)thread.getMethod("getSystemContext").invoke(main);
+        provision();
+        context.registerReceiver(new BroadcastReceiver() {
+            @Override public void onReceive(Context c,Intent i) {
+                if(SystemClock.elapsedRealtime()>pairingUntil) return;
+                BluetoothDevice d=i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                int variant=i.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT,-1);
+                // Numeric comparison/consent only. Never invent or silently inject a PIN/passkey.
+                if(d!=null && (variant==2 || variant==3)) try {
+                    BluetoothDevice.class.getMethod("setPairingConfirmation",boolean.class).invoke(d,true);
+                } catch(Exception e) { android.util.Log.w("WuKongProvision","Pair confirmation unavailable",e); }
+            }
+        },new IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST));
+        Handler handler=new Handler(Looper.getMainLooper());
+        handler.post(new Runnable() { public void run() {
+            try { grantUsb(); maintenance(); } catch(Exception e) { android.util.Log.w("WuKongProvision","Provisioning retry: "+e.getClass().getSimpleName()); }
+            handler.postDelayed(this,2000);
+        }});
+        Looper.loop();
+    }
+    private static void run(String... args) throws Exception {
+        java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).start();
+        byte[] buffer=new byte[2048];try(InputStream in=p.getInputStream()) {while(in.read(buffer)>=0) {}}
+        if(p.waitFor()!=0) android.util.Log.w("WuKongProvision","Command unavailable: "+args[0]+" "+args[1]);
+    }
+    private static void provision() throws Exception {
+        for(String pkg:new String[]{PHONE,CAR}) {
+            String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"RECORD_AUDIO","POST_NOTIFICATIONS"};
+            for(String permission:perms) run("/system/bin/pm","grant",pkg,"android.permission."+permission);
+            run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
+            run("/system/bin/cmd","appops","set",pkg,"RUN_IN_BACKGROUND","allow");
+        }
+        run("/system/bin/cmd","appops","set",PHONE,"ACTIVATE_VPN","allow");
+        run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
+        run("/system/bin/am","force-stop","com.android.mtp");
+        run("/system/bin/svc","bluetooth","enable");
+        run("/system/bin/svc","wifi","enable");
+    }
+    private static Object usb() throws Exception {
+        IBinder binder=(IBinder)Class.forName("android.os.ServiceManager").getMethod("getService",String.class).invoke(null,"usb");
+        return Class.forName("android.hardware.usb.IUsbManager$Stub").getMethod("asInterface",IBinder.class).invoke(null,binder);
+    }
+    private static void invoke(Object service,String name,Class<?>[] types,Object... args) throws Exception {
+        Class.forName("android.hardware.usb.IUsbManager").getMethod(name,types).invoke(service,args);
+    }
+    private static void grantUsb() throws Exception {
+        Object service=usb();Bundle devices=new Bundle();
+        invoke(service,"getDeviceList",new Class<?>[]{Bundle.class},devices);
+        int phoneUid=context.getPackageManager().getApplicationInfo(PHONE,0).uid;
+        for(String key:devices.keySet()) {
+            UsbDevice device=devices.getParcelable(key);
+            if(device!=null && device.getVendorId()==0x05ac) {
+                invoke(service,"grantDevicePermission",new Class<?>[]{UsbDevice.class,int.class},device,phoneUid);
+                invoke(service,"setDevicePackage",new Class<?>[]{UsbDevice.class,String.class,int.class},device,PHONE,0);
+            }
+        }
+        UsbAccessory accessory=(UsbAccessory)Class.forName("android.hardware.usb.IUsbManager").getMethod("getCurrentAccessory").invoke(service);
+        if(accessory!=null && "Baidu".equals(accessory.getManufacturer()) && "CarLife".equals(accessory.getModel())) {
+            int carUid=context.getPackageManager().getApplicationInfo(CAR,0).uid;
+            invoke(service,"grantAccessoryPermission",new Class<?>[]{UsbAccessory.class,int.class},accessory,carUid);
+            invoke(service,"setAccessoryPackage",new Class<?>[]{UsbAccessory.class,String.class,int.class},accessory,CAR,0);
+        }
+    }
+    private static void maintenance() throws Exception {
+        File dir=new File("/data/user/0/"+PHONE+"/files");
+        File request=new File(dir,"maintenance-request");
+        if(!request.isFile() || request.length()>32 || java.nio.file.Files.isSymbolicLink(request.toPath())) return;
+        String command=new String(java.nio.file.Files.readAllBytes(request.toPath()),StandardCharsets.UTF_8).trim();
+        if(!request.delete()) return;
+        String result="completed";
+        try {
+            if("pair".equals(command)) {
+                pairingUntil=SystemClock.elapsedRealtime()+120000;
+                setDiscoverable(true);
+                new Handler(Looper.getMainLooper()).postDelayed(()->{if(SystemClock.elapsedRealtime()>=pairingUntil)try{setDiscoverable(false);}catch(Exception ignored){}},120000);
+            } else if("pair-stop".equals(command)) {pairingUntil=0;setDiscoverable(false);}
+            else if("reboot".equals(command)) run("/system/bin/reboot");
+            else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
+            else result="unsupported action";
+        } catch(Exception e) {result="failed: "+e.getClass().getSimpleName();}
+        File temp=File.createTempFile("maintenance-", ".tmp",dir);
+        try(FileOutputStream out=new FileOutputStream(temp)){out.write((command+": "+result).getBytes(StandardCharsets.UTF_8));}
+        temp.setReadable(true,false);
+        if(!temp.renameTo(new File(dir,"maintenance-result")))temp.delete();
+    }
+    private static void setDiscoverable(boolean enabled) throws Exception {
+        BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
+        BluetoothAdapter.class.getMethod("setScanMode",int.class).invoke(adapter,enabled?BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:BluetoothAdapter.SCAN_MODE_CONNECTABLE);
+    }
+    private static void display(boolean enabled) throws Exception {
+        Class<?> surface=Class.forName("android.view.SurfaceControl");
+        long[] ids=(long[])surface.getMethod("getPhysicalDisplayIds").invoke(null);
+        if(ids.length==0) throw new IllegalStateException("No physical display");
+        for(long id:ids) {
+            IBinder token=(IBinder)surface.getMethod("getPhysicalDisplayToken",long.class).invoke(null,id);
+            surface.getMethod("setDisplayPowerMode",IBinder.class,int.class).invoke(null,token,enabled?2:0);
+        }
+    }
+}

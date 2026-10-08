@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="com.projection.car.permission.BOARD_CONTROL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:label="WuKong CarPlay Bridge" android:allowBackup="false">
+        <service android:name=".BoardService" android:exported="false" android:foregroundServiceType="connectedDevice|microphone" />
+        <service android:name="com.shilapi.xcertplay.shared.MyCarAppService" tools:node="remove" />
+        <meta-data android:name="androidx.car.app.minCarApiLevel" tools:node="remove" />
+        <receiver android:name=".BoardBootReceiver" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>
+        </receiver>
+        <activity android:name=".BoardControlActivity" android:exported="true" android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.NoDisplay" android:excludeFromRecents="true" />
+        <activity android:name=".BoardUsbActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" android:excludeFromRecents="true">
+            <intent-filter><action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" /></intent-filter>
+            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/board_usb_filter" />
+        </activity>
+        <activity android:name=".BoardPreviewActivity" android:exported="true" android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.Material.NoActionBar" android:resizeableActivity="true" />
+    </application>
+</manifest>

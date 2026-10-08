@@ -27,3 +27,5 @@ include(":common")
 include(":mobile")
 include(":automotive")
 include(":shared")
+
+include(":board")

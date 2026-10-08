@@ -139,7 +139,23 @@ class AndroidMediaSink(
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
     private val onMediaAudioChanged: (Boolean) -> Unit = {},
+    /** Appliance mode forwards H.264/PCM without allocating local video codecs or AudioTracks. */
+    private val forwardingOnly: Boolean = false,
 ) : MediaSink {
+    @Volatile private var localPreviewEnabled = !forwardingOnly
+    private val videoFrames = AtomicLong()
+    private val videoBytes = AtomicLong()
+    fun mediaStats(): LongArray = longArrayOf(videoFrames.get(), videoBytes.get(), videoDecoders.size.toLong(), audioRenderers.size.toLong())
+    fun setLocalPreviewEnabled(enabled: Boolean) {
+        localPreviewEnabled = enabled
+        if (!enabled) {
+            videoDecoders.values.forEach { it.close() }; videoDecoders.clear()
+            synchronized(mirrorLock) { mirrorDecoders.values.forEach { it.close() }; mirrorDecoders.clear() }
+        } else {
+            lastVideoConfig.forEach { (type, config) -> videoDecoder(type).configure(config.first, config.second) }
+            videoRecoveryHandlers.keys.forEach { requestVideoRecovery(it) }
+        }
+    }
     private val appContext = context?.applicationContext
     private val carLifeBridge = appContext?.let { CarLifePcmBridge(it, onAudioDiagnostic) }
     private val carLifeVideo = appContext?.let { CarLifeVideoBridge(it, videoWidth, videoHeight,
@@ -208,6 +224,7 @@ class AndroidMediaSink(
      * starts at the next keyframe it asks for; null stops it. The stream's own surface is not affected.
      */
     fun setMirrorSurface(type: Int, key: String, surface: Surface?) {
+        if (!localPreviewEnabled && surface != null) return
         val id = type to key
         synchronized(mirrorLock) {
             mirrorDecoders.remove(id)?.close()
@@ -242,14 +259,19 @@ class AndroidMediaSink(
         val codec = pendingVideoCodec[type] ?: VideoCodec.H264
         if (type == 110) carLifeVideo?.configure(codec, codecData)
         lastVideoConfig[type] = codec to codecData
-        videoDecoder(type).configure(codec, codecData)
-        mirrorDecoders(type).forEach { it.configure(codec, codecData) }
+        if (localPreviewEnabled) {
+            videoDecoder(type).configure(codec, codecData)
+            mirrorDecoders(type).forEach { it.configure(codec, codecData) }
+        }
     }
 
     override fun onVideoFrame(type: Int, naluBytes: ByteArray) {
         if (type == 110) carLifeVideo?.submit(naluBytes)
-        videoDecoder(type).submit(naluBytes)
-        mirrorDecoders(type).forEach { it.submit(naluBytes) }
+        videoFrames.incrementAndGet(); videoBytes.addAndGet(naluBytes.size.toLong())
+        if (localPreviewEnabled) {
+            videoDecoder(type).submit(naluBytes)
+            mirrorDecoders(type).forEach { it.submit(naluBytes) }
+        }
     }
 
     override fun onScreenStreamActive(type: Int, active: Boolean) {
@@ -402,6 +424,7 @@ class AndroidMediaSink(
             audioFocusCoordinator,
             mediaBufferMillis,
             onAudioDiagnostic,
+            forwardingOnly,
             carLifeBridge?.route(if (AudioChannelMapper.map(
                 format.audioType, format.payloadType,
                 if (advancedAudioChannelMapping) AudioChannelMappingMode.AUTOMOTIVE_BUS
@@ -793,6 +816,7 @@ private class AudioRenderer(
     private val audioFocusCoordinator: AudioFocusCoordinator,
     private val mediaBufferMillis: Int,
     private val report: (String) -> Unit,
+    private val forwardingOnly: Boolean,
     private val carLifeRoute: CarLifePcmBridge.Route?,
 ) : Closeable {
     private var decodedSampleRate = format.sampleRate
@@ -803,7 +827,8 @@ private class AudioRenderer(
 
     private var trackAttributes: AudioAttributes? = null
     private var mappedChannel: AudioChannel? = null
-    private val queue = LinkedBlockingQueue<AudioPacket>(MAX_QUEUED_PACKETS)
+    private val queue = LinkedBlockingQueue<AudioPacket>(if (forwardingOnly) 64 else MAX_QUEUED_PACKETS)
+    private val queuedAudioBytes = AtomicInteger()
     @Volatile private var running = true
     @Volatile private var started = false
     private var codec: MediaCodec? = null
@@ -861,7 +886,11 @@ private class AudioRenderer(
             val previous = lastArrivalNs.getAndSet(now)
             if (previous != 0L) maxArrivalGapMs.accumulateAndGet((now - previous) / 1_000_000L, ::maxOf)
         }
-        if (!started || !queue.offer(AudioPacket(rtp, sample))) {
+        val admitted = started && rtp.size <= 65536 && synchronized(queue) {
+            if (queuedAudioBytes.get() + rtp.size > 1024 * 1024) false
+            else if (queue.offer(AudioPacket(rtp, sample))) { queuedAudioBytes.addAndGet(rtp.size); true } else false
+        }
+        if (!admitted) {
             if (started) packetsDropped.incrementAndGet()
             if (started && !droppedPacketsLogged) {
                 droppedPacketsLogged = true
@@ -887,12 +916,17 @@ private class AudioRenderer(
                 AudioCodecKind.OPUS -> configureCodec(MediaFormat.MIMETYPE_AUDIO_OPUS)
                 AudioCodecKind.LPCM -> Unit
             }
-            createTrack()
-            diagnosticStage = "focus"
-            requestAudioFocus()
+            if (!forwardingOnly) {
+                createTrack()
+                diagnosticStage = "focus"
+                requestAudioFocus()
+            }
             while (running) {
                 diagnosticStage = "packet"
-                queue.poll(AUDIO_POLL_MILLIS, TimeUnit.MILLISECONDS)?.let(::handle)
+                queue.poll(AUDIO_POLL_MILLIS, TimeUnit.MILLISECONDS)?.let { packet ->
+                    synchronized(queue) { queuedAudioBytes.addAndGet(-packet.rtp.size) }
+                    handle(packet)
+                }
                 // Output becomes ready asynchronously, including after the last packet of a burst.
                 // Waiting for the next UDP packet can strand decoded sound for hundreds of ms.
                 diagnosticStage = "decoder-output"
@@ -1318,6 +1352,7 @@ private class AudioRenderer(
             bridgeActive = true
             return
         }
+        if (forwardingOnly) return // No speaker/capture fallback on the headless appliance.
         if (bridgeActive) {
             bridgeActive = false
             bufferProgress = AudioBufferProgress(frameBytes)

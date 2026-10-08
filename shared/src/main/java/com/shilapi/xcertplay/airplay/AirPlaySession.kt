@@ -114,7 +114,7 @@ class AirPlaySession(
         if (!closed.get()) listener.onVideoFrameRendered(this)
     }
 
-    internal fun logTrace(message: String) = trace(message)
+    internal fun logTrace(message: String) = trace { message }
 
     fun start() {
         Thread(::runControl, "airplay-control").apply {
@@ -166,7 +166,7 @@ class AirPlaySession(
             "Content-Type: $PLIST_CONTENT_TYPE\r\n" +
             "Content-Length: ${body.size}\r\n" +
             "CSeq: $eventCseq\r\n\r\n"
-        trace("airplay event tx headers=$head bodyHex=${body.toHex()}")
+        trace { "airplay event tx headers=$head bodyHex=${body.toHex()}" }
         return try {
             val bytes = cipher.encrypt(head.toByteArray(Charsets.US_ASCII) + body)
             val output = socket.getOutputStream()
@@ -327,10 +327,9 @@ class AirPlaySession(
                         AirPlayControlDiagnostics.request(request.method, request.path, request.body.size),
                         false,
                     )
-                    trace(
-                        "airplay control rx headers=${request.headers} " +
-                            "bodyHex=${request.body.toHex()}",
-                    )
+                    trace {
+                        "airplay control rx headers=${request.headers} bodyHex=${request.body.toHex()}"
+                    }
                     val response = try {
                         handle(request)
                     } catch (error: Exception) {
@@ -350,7 +349,7 @@ class AirPlaySession(
                         false,
                     )
                     val wire = RtspMessage.buildResponse(request, response)
-                    trace("airplay control tx wireHex=${wire.toHex()}")
+                    trace { "airplay control tx wireHex=${wire.toHex()}" }
                     output.write(cipher?.encrypt(wire) ?: wire)
                     if (cipher == null && pairVerify.controlKeys != null) {
                         val keys = pairVerify.controlKeys!!
@@ -455,9 +454,10 @@ class AirPlaySession(
         }
     }
 
-    private fun trace(message: String) {
+    private inline fun trace(message: () -> String) {
+        if (!config.protocolTraceEnabled) return
         try {
-            listener.onDebugLog("TRACE $message")
+            listener.onDebugLog("TRACE ${message()}")
         } catch (error: Exception) {
             Log.w(TAG, "trace log callback failed", error)
         }
@@ -476,7 +476,7 @@ class AirPlaySession(
             val responseStreams = handleStreams(streams)
             debugLog("airplay SETUP response streams=$responseStreams")
             val body = BplistCodec.encode(linkedMapOf("streams" to responseStreams))
-            trace("airplay SETUP response bplistHex=${body.toHex()}")
+            trace { "airplay SETUP response bplistHex=${body.toHex()}" }
             return RtspMessage.Response(headers = mapOf("Content-Type" to PLIST_CONTENT_TYPE), body = body)
         }
 
@@ -590,7 +590,7 @@ class AirPlaySession(
             "airplay TEARDOWN types=${types ?: "all"} activeBefore=$activeStreams " +
                 "body=${request.body.size} bytes payload=$decodedBody",
         )
-        trace("airplay TEARDOWN raw${request.body.size}Hex=${request.body.toHex()}")
+        trace { "airplay TEARDOWN raw${request.body.size}Hex=${request.body.toHex()}" }
 
         if (types == null) {
             activeStreams.toList().forEach { media.onTeardown(this, it) }
@@ -722,11 +722,10 @@ class AirPlaySession(
                         "airplay event rx ${message.method} ${message.path} cseq=${message.headers["cseq"] ?: "-"} body=${message.body.size}",
                     )
                     val response = RtspMessage.buildResponse(message, RtspMessage.Response(status = 200))
-                    trace(
-                        "airplay event rx headers=${message.headers} " +
-                            "bodyHex=${message.body.toHex()}",
-                    )
-                    trace("airplay event tx wireHex=${response.toHex()}")
+                    trace {
+                        "airplay event rx headers=${message.headers} bodyHex=${message.body.toHex()}"
+                    }
+                    trace { "airplay event tx wireHex=${response.toHex()}" }
                     synchronized(eventWriteLock) {
                         output.write(cipher.encrypt(response))
                         output.flush()
@@ -804,7 +803,8 @@ internal fun safeClose(closeable: Closeable?) {
 }
 
 private fun ByteArray.toHex(): String =
-    joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    take(256).joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) } +
+        if (size > 256) "...[${size} bytes]" else ""
 
 private fun asMap(value: Any?): Map<String, Any?>? {
     val map = value as? Map<*, *> ?: return null

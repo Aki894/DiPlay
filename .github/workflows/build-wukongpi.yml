@@ -1,0 +1,52 @@
+name: WukongPi headless bridge
+on:
+  push:
+    branches: ["integration/wukongpi-headless"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.0 build-tools;36.0.0 ndk;28.2.13676358
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Source and protocol checks
+        run: |
+          python3 scripts/check_public_tree.py
+          python3 scripts/check_generic_receiver.py
+          ./gradlew :shared:testDebugUnitTest :board:testDebugUnitTest :board:lintDebug :board:assembleDebug --stacktrace
+      - name: Prepare existing explicit car-test inputs
+        run: |
+          curl --fail --location --retry 3 'https://raw.githubusercontent.com/Aki894/CarProjection/0760e3b4f5145178d315eaeb1413fc20dba90b78/keystore/carprojection-debug.keystore.b64' -o "$RUNNER_TEMP/bridge-debug.b64"
+          sed 's/\\n$//' "$RUNNER_TEMP/bridge-debug.b64" | base64 --decode > "$RUNNER_TEMP/bridge-debug.keystore"
+          curl --fail --location --retry 3 'https://github.com/shihabal3amri/DiPlay/releases/download/v0.2.9/DiPlay-0.2.9.apk' -o "$RUNNER_TEMP/DiPlay-upstream.apk"
+          python3 scripts/prepare_bridge_auth.py "$RUNNER_TEMP/DiPlay-upstream.apk" "$RUNNER_TEMP/diplay-runtime-assets"
+      - name: Standalone board APK
+        env:
+          DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/diplay-runtime-assets
+          DIPLAY_DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/bridge-debug.keystore
+        run: ./gradlew :board:assembleStandaloneDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiPlay-wukongpi-apk
+          path: board/build/outputs/apk/debug/board-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wukongpi-checks
+          path: |
+            board/build/reports/
+            shared/build/reports/tests/
+      - name: Clean temporary authentication inputs
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/diplay-runtime-assets" "$RUNNER_TEMP/DiPlay-upstream.apk" "$RUNNER_TEMP/bridge-debug.b64" "$RUNNER_TEMP/bridge-debug.keystore"
