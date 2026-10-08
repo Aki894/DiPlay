@@ -103,11 +103,12 @@ public final class BoardProvisioner {
             if(!Boolean.TRUE.equals(accepted))throw new IOException("Pairing confirmation rejected: "+accepted);
             writePairingFile("pairing-result","confirmation sent; waiting for iPhone");
             android.util.Log.i("WuKongProvision","Pair confirmation accepted; variant="+variant);
-        } catch(Exception e) {
-            Throwable cause=rootCause(e);
-            writePairingFile("pairing-result","failed: "+cause.getClass().getSimpleName()+": "+String.valueOf(cause.getMessage()));
-            android.util.Log.w("WuKongProvision","Pair confirmation failed",cause);
-        }
+        } catch(SecurityException e) { pairingFailure(e); }
+        catch(Exception e) { pairingFailure(rootCause(e)); }
+    }
+    private static void pairingFailure(Throwable cause) throws Exception {
+        writePairingFile("pairing-result","failed: "+cause.getClass().getSimpleName()+": "+String.valueOf(cause.getMessage()));
+        android.util.Log.w("WuKongProvision","Pair confirmation failed",cause);
     }
     private static void run(String... args) throws Exception {
         java.lang.Process p=new ProcessBuilder(args).redirectErrorStream(true).redirectOutput(new File("/dev/null")).start();
