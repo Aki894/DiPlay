@@ -157,8 +157,11 @@ public final class BoardProvisioner {
             run("/system/bin/cmd","appops","set",pkg,op,"allow");
     }
     private static void grantMissing(String pkg,String name) throws Exception {
-        if(Build.VERSION.SDK_INT<33 && ("POST_NOTIFICATIONS".equals(name) || "NEARBY_WIFI_DEVICES".equals(name)))return;
         String permission="android.permission."+name;
+        // Tiramisu preview reports SDK 32 but already contains some API-33
+        // permissions. Ask this framework rather than guessing from SDK_INT.
+        try {context.getPackageManager().getPermissionInfo(permission,0);}
+        catch(android.content.pm.PackageManager.NameNotFoundException missing) {return;}
         String[] requested=context.getPackageManager().getPackageInfo(pkg,android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions;
         if(requested==null || !java.util.Arrays.asList(requested).contains(permission))return;
         if(context.getPackageManager().checkPermission(permission,pkg)==android.content.pm.PackageManager.PERMISSION_GRANTED)return;
