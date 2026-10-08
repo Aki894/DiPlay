@@ -41,6 +41,8 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                 session.method==Method.GET && session.uri=="/api/v1/diagnostics/export" -> return response(Response.Status.OK,"text/plain",
                     service.status().toString(2)+"\n"+service.log.export())
                 session.method==Method.GET && session.uri=="/api/v1/phones" -> {
+                    if (service.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                        throw SecurityException("Bluetooth permission missing; run board provisioning")
                     val adapter=service.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter
                     JSONObject().put("phones",JSONArray(adapter?.bondedDevices.orEmpty().map { JSONObject().put("address",it.address).put("name",it.name ?: "") }))
                 }
@@ -73,6 +75,13 @@ class BoardWebServer(private val service: BoardService,lan: Boolean) : NanoHTTPD
                     JSONObject().put("accepted",true).put("car",car)
                 }
                 session.method==Method.POST && session.uri=="/api/v1/car/config" -> CarLifeControl.call(service,"config",body)
+                session.method==Method.POST && session.uri=="/api/v1/phones/forget" -> {
+                    val address=body.getString("address")
+                    require(Regex("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(address))
+                    service.request("stop")
+                    service.maintenance("forget:$address")
+                    JSONObject().put("accepted",true).put("phoneSessionStopped",true)
+                }
                 session.method==Method.POST && session.uri=="/api/v1/maintenance" -> {
                     service.maintenance(body.getString("action")); JSONObject().put("accepted",true)
                 }

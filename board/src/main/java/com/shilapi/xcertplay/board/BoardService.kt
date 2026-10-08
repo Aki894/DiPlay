@@ -94,6 +94,10 @@ class BoardService : Service() {
             DiPlayBootstrap.ensure(this)
             val identity = AirPlayPersistence.loadIdentity(this)
             val deviceId = DiPlayBootstrap.deviceId(identity)
+            val bluetoothAddress=DiPlayBluetooth.localAddress(this)
+            if (cfg.wireless && bluetoothAddress==null) {
+                fail("Bluetooth controller address unavailable; waiting for board provisioning");return
+            }
             val size = target
             val width = size?.width ?: cfg.width; val height = size?.height ?: cfg.height
             val fps = size?.fps ?: cfg.fps
@@ -102,7 +106,7 @@ class BoardService : Service() {
                 forwardingOnly = true,onAudioDiagnostic = log::add)
             sink = renderer
             val air = AirPlayConfig(deviceName="WuKongPi",deviceId=deviceId,
-                btMac=DiPlayBluetooth.localAddress(this) ?: deviceId,sourceVersion="950.7.1",
+                btMac=bluetoothAddress ?: deviceId,sourceVersion="950.7.1",
                 main=AirPlayDisplayConfig(width,height,fps=fps,primaryInputDevice=3,safeArea=AirPlayInsets()),
                 microphone=cfg.microphone,manufacturer="WuKongPi",model="Hi-Zero",icons=emptyList())
             val runtime = CarPlayRuntimeConfig(mfiTarget=MfiTarget.LOCAL,
@@ -169,7 +173,7 @@ class BoardService : Service() {
             .put("maintenance",runCatching { File(filesDir,"maintenance-result").readText().take(256) }.getOrDefault("root helper not yet used"))
     }
     fun maintenance(action: String) {
-        require(action in setOf("reboot","pair","pair-stop","display-off","display-on"))
+        require(action in setOf("reboot","pair","pair-stop","display-off","display-on") || Regex("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}").matches(action))
         File(filesDir,"maintenance-request").writeText(action)
         log.add("Maintenance requested: $action")
     }

@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Inspect the actual shrunk standalone board artifact, not just source manifests."""
+import os
+import subprocess
+import sys
+import zipfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+apk = Path(sys.argv[1])
+sdk = Path(os.environ['ANDROID_HOME'])
+analyzer = sdk / 'cmdline-tools/latest/bin/apkanalyzer'
+manifest = subprocess.check_output([str(analyzer), 'manifest', 'print', str(apk)], text=True)
+root = ET.fromstring(manifest)
+android = '{http://schemas.android.com/apk/res/android}'
+assert root.attrib['package'] == 'com.shihab.diplay.hudtest'
+components = [x.attrib.get(android + 'name', '') for tag in ['activity', 'service', 'receiver'] for x in root.findall('application/' + tag)]
+assert 'com.shilapi.xcertplay.board.BoardService' in components
+assert not any('CarPlayHostActivity' in x or 'MyCarAppService' in x for x in components)
+assert not root.findall('.//category[@' + android + 'name="android.intent.category.LAUNCHER"]')
+with zipfile.ZipFile(apk) as z:
+    names = z.namelist()
+    libs = [n for n in names if n.startswith('lib/') and n.endswith('.so')]
+    assert libs and all(n.startswith('lib/armeabi-v7a/') for n in libs), libs
+    assert all('assets/offline-mfi/' + n in names for n in ['identity.pk8', 'certificate.p7b'])
+    assert 'assets/index.html' in names
+    assert any(b'com/shilapi/xcertplay/board/BoardProvisioner' in z.read(n) for n in names if n.endswith('.dex'))
+print('PASS: shrunk board APK, root entry point, service-only manifest, ARM32 libraries and required assets')
+print('APK bytes:', apk.stat().st_size)

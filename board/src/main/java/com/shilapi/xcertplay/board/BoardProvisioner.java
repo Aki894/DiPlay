@@ -34,7 +34,9 @@ public final class BoardProvisioner {
         },new IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST));
         Handler handler=new Handler(Looper.getMainLooper());
         handler.post(new Runnable() { public void run() {
-            try { grantUsb(); maintenance(); } catch(Exception e) { android.util.Log.w("WuKongProvision","Provisioning retry: "+e.getClass().getSimpleName()); }
+            for(int task=0;task<3;task++) try {
+                if(task==0)grantUsb();else if(task==1)bluetoothAddress();else maintenance();
+            } catch(Exception e) { android.util.Log.w("WuKongProvision","Task "+task+" retry: "+e.getClass().getSimpleName()); }
             handler.postDelayed(this,2000);
         }});
         Looper.loop();
@@ -48,7 +50,7 @@ public final class BoardProvisioner {
     }
     private static void provision() throws Exception {
         for(String pkg:new String[]{PHONE,CAR}) {
-            String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"RECORD_AUDIO","POST_NOTIFICATIONS"};
+            String[] perms=pkg.equals(PHONE)?new String[]{"RECORD_AUDIO","BLUETOOTH_CONNECT","ACCESS_FINE_LOCATION","ACCESS_COARSE_LOCATION","NEARBY_WIFI_DEVICES","POST_NOTIFICATIONS"}:new String[]{"POST_NOTIFICATIONS"};
             for(String permission:perms) run("/system/bin/pm","grant",pkg,"android.permission."+permission);
             run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
             run("/system/bin/cmd","appops","set",pkg,"RUN_IN_BACKGROUND","allow");
@@ -84,6 +86,18 @@ public final class BoardProvisioner {
             invoke(service,"setAccessoryPackage",new Class<?>[]{UsbAccessory.class,String.class,int.class},accessory,CAR,0);
         }
     }
+    private static void bluetoothAddress() throws Exception {
+        File target=new File("/data/user/0/"+PHONE+"/files/board-bluetooth-address");
+        if(!target.getParentFile().isDirectory())return;
+        BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
+        if(adapter==null || !adapter.isEnabled())return;
+        String address=(String)BluetoothAdapter.class.getMethod("getAddress").invoke(adapter);
+        if(address==null || !address.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}") || address.startsWith("02:00:00:00:00:") || address.equals("00:00:00:00:00:00"))return;
+        if(target.isFile() && address.equals(new String(java.nio.file.Files.readAllBytes(target.toPath()),StandardCharsets.UTF_8).trim()))return;
+        File temp=File.createTempFile("bt-address-", ".tmp",target.getParentFile());
+        try(FileOutputStream out=new FileOutputStream(temp)){out.write(address.getBytes(StandardCharsets.UTF_8));}
+        temp.setReadable(true,false);if(!temp.renameTo(target))temp.delete();
+    }
     private static void maintenance() throws Exception {
         File dir=new File("/data/user/0/"+PHONE+"/files");
         File request=new File(dir,"maintenance-request");
@@ -97,6 +111,13 @@ public final class BoardProvisioner {
                 setDiscoverable(true);
                 new Handler(Looper.getMainLooper()).postDelayed(()->{if(SystemClock.elapsedRealtime()>=pairingUntil)try{setDiscoverable(false);}catch(Exception ignored){}},120000);
             } else if("pair-stop".equals(command)) {pairingUntil=0;setDiscoverable(false);}
+            else if(command.matches("forget:(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")) {
+                String address=command.substring(7);
+                BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
+                BluetoothDevice device=adapter.getRemoteDevice(address);
+                if(!Boolean.TRUE.equals(BluetoothDevice.class.getMethod("removeBond").invoke(device)))throw new IOException("Remove bond rejected");
+                result="removal requested";
+            }
             else if("reboot".equals(command)) run("/system/bin/reboot");
             else if("display-off".equals(command) || "display-on".equals(command)) display("display-on".equals(command));
             else result="unsupported action";

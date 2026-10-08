@@ -1,8 +1,7 @@
 plugins { alias(libs.plugins.android.application) }
 val stageBoardSources = tasks.register<Sync>("stageBoardSources") {
     from("../common/src/main/java") {
-        include("com/shilapi/xcertplay/AirPlayPersistence.kt", "com/shilapi/xcertplay/DiPlayBootstrap.kt",
-            "com/shilapi/xcertplay/DiPlayBluetooth.kt")
+        include("com/shilapi/xcertplay/AirPlayPersistence.kt", "com/shilapi/xcertplay/DiPlayBootstrap.kt")
     }
     into(layout.buildDirectory.dir("generated/board-sources"))
 }

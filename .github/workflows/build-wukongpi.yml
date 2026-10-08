@@ -43,6 +43,10 @@ jobs:
           DIPLAY_AUTH_ASSETS_DIR: ${{ runner.temp }}/diplay-runtime-assets
           DIPLAY_DEBUG_KEYSTORE_PATH: ${{ runner.temp }}/bridge-debug.keystore
         run: ./gradlew :board:assembleStandaloneDebug --stacktrace
+      - name: Inspect final shrunk artifact
+        run: |
+          python3 scripts/check-board-apk.py board/build/outputs/apk/debug/board-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs board/build/outputs/apk/debug/board-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: DiPlay-wukongpi-apk
