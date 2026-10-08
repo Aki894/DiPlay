@@ -29,8 +29,6 @@ foreach ($package in @("com.projection.car","com.shihab.diplay.hudtest")) {
 # Preserve both application data directories and existing iPhone pairings.
 Invoke-Adb install -r -d $CarProjectionApk
 Invoke-Adb install -r -d $DiPlayApk
-Invoke-Adb shell am force-stop com.projection.car
-Invoke-Adb shell am force-stop com.shihab.diplay.hudtest
 $vendorHelper = (Invoke-Adb shell "if [ -f /vendor/etc/init/init.wukong-bridge.rc ]; then echo ready; fi") -join ""
 if ($vendorHelper -notmatch "ready") {
     throw "APKs installed and backed up. Update super.img with the headless board patch before starting. Do not format userdata."

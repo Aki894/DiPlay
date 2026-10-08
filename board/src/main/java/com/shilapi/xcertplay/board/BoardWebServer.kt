@@ -58,7 +58,7 @@ class BoardWebServer(private val service: BoardService,@Suppress("UNUSED_PARAMET
                 session.method==Method.GET && session.uri=="/api/v1/config" -> BoardConfig.load(service).json().put("revision",prefs.getInt("revision",0))
                 session.method==Method.GET && session.uri=="/api/v1/logs" -> JSONObject().put("lines",service.log.json())
                 session.method==Method.GET && session.uri=="/api/v1/diagnostics/export" -> return response(Response.Status.OK,"text/plain",
-                    service.status().toString(2)+"\n"+service.log.export()+"\nHEALTH\n"+service.healthExport())
+                    service.diagnosticStatus().toString(2)+"\n"+service.log.export()+"\nHEALTH\n"+service.healthExport())
                 session.method==Method.GET && session.uri=="/api/v1/phones" -> {
                     if (service.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                         throw SecurityException("Bluetooth permission missing; run board provisioning")

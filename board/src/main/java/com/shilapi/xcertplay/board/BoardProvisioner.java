@@ -140,16 +140,24 @@ public final class BoardProvisioner {
             // per-UID foreground mode with temporary appops overrides.
             if(pkg.equals(PHONE) && Build.VERSION.SDK_INT>=29 && Build.VERSION.SDK_INT<=32)
                 grantMissing(pkg,"ACCESS_BACKGROUND_LOCATION");
-            run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
-            run("/system/bin/cmd","appops","set",pkg,"RUN_IN_BACKGROUND","allow");
+            if(!context.getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(pkg))
+                run("/system/bin/cmd","deviceidle","whitelist","+"+pkg);
+            allowOp(pkg,"RUN_IN_BACKGROUND");
         }
-        run("/system/bin/cmd","appops","set",PHONE,"ACTIVATE_VPN","allow");
+        allowOp(PHONE,"ACTIVATE_VPN");
         if(context.getPackageManager().getApplicationEnabledSetting("com.android.mtp")!=android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER)
             run("/system/bin/pm","disable-user","--user","0","com.android.mtp");
-        run("/system/bin/svc","bluetooth","enable");
-        run("/system/bin/svc","wifi","enable");
+        BluetoothAdapter adapter=context.getSystemService(BluetoothManager.class).getAdapter();
+        if(adapter!=null && !adapter.isEnabled())run("/system/bin/svc","bluetooth","enable");
+        if(!context.getSystemService(android.net.wifi.WifiManager.class).isWifiEnabled())run("/system/bin/svc","wifi","enable");
+    }
+    private static void allowOp(String pkg,String op) throws Exception {
+        int uid=context.getPackageManager().getApplicationInfo(pkg,0).uid;
+        if(context.getSystemService(AppOpsManager.class).unsafeCheckOpNoThrow(op,uid,pkg)!=AppOpsManager.MODE_ALLOWED)
+            run("/system/bin/cmd","appops","set",pkg,op,"allow");
     }
     private static void grantMissing(String pkg,String name) throws Exception {
+        if(Build.VERSION.SDK_INT<33 && ("POST_NOTIFICATIONS".equals(name) || "NEARBY_WIFI_DEVICES".equals(name)))return;
         String permission="android.permission."+name;
         String[] requested=context.getPackageManager().getPackageInfo(pkg,android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions;
         if(requested==null || !java.util.Arrays.asList(requested).contains(permission))return;

@@ -32,7 +32,7 @@ class BoardService : Service() {
     private var discovery: CarLifeVideoBridge? = null
     private var web: BoardWebServer? = null
     private lateinit var wake: PowerManager.WakeLock
-    private var retiring: CarPlayController? = null
+    @Volatile private var retiring: CarPlayController? = null
     private var attempts = 0
     private val serviceStartedMs = SystemClock.elapsedRealtime()
     @Volatile private var firstActiveMs: Long? = null
@@ -219,6 +219,9 @@ class BoardService : Service() {
         if(wake.isHeld) wake.release()
     }
     fun healthExport()=health.export()
+    fun diagnosticStatus()=status().also { snapshot ->
+        snapshot.optJSONObject("management")?.optJSONObject("maintenanceHotspot")?.remove("passphrase")
+    }
     fun status(): JSONObject {
         val memory = android.os.Debug.MemoryInfo().also { android.os.Debug.getMemoryInfo(it) }
         val stats=sink?.mediaStats() ?: longArrayOf(0,0,0,0)
@@ -243,7 +246,7 @@ class BoardService : Service() {
                 .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>()
                 .filter { !it.isLinkLocalAddress }.map { "http://${it.hostAddress}:8765/" }
         }.getOrDefault(emptyList<String>())))
-        .put("maintenanceHotspot",maintenanceHotspot)
+        .put("maintenanceHotspot",maintenanceHotspot?.let { JSONObject(it.toString()) })
     private fun closeMaintenance() {
         val previous=maintenanceGroup;maintenanceGroup=null;maintenanceHotspot=null
         previous?.let { runCatching { it.close() } }
@@ -257,6 +260,7 @@ class BoardService : Service() {
         maintenanceGroup=group;state="maintenance-starting";error=""
         Thread({
             try {
+                if(retiring?.awaitClosed(5000)==false)throw java.io.IOException("Previous CarPlay transport is still closing; retry maintenance")
                 val info=group.start(30000)
                 actor.post {
                     if(maintenanceGroup===group) {
@@ -288,7 +292,9 @@ class BoardService : Service() {
 
 class BoardBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context,intent: Intent) {
-        if(intent.action==Intent.ACTION_BOOT_COMPLETED || intent.action==Intent.ACTION_MY_PACKAGE_REPLACED) context.startForegroundService(Intent(context,BoardService::class.java).putExtra("command","boot"))
+        if(intent.action==Intent.ACTION_BOOT_COMPLETED || intent.action==Intent.ACTION_MY_PACKAGE_REPLACED)
+            context.startForegroundService(Intent(context,BoardService::class.java).putExtra("command",
+                if(intent.action==Intent.ACTION_BOOT_COMPLETED) "boot" else "restore"))
     }
 }
 class BoardControlActivity : Activity() {

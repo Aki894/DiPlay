@@ -17,8 +17,6 @@ Invoke-Adb wait-for-device
 # Also prevent vendor init from launching the board-only entry point in the restored phone APK.
 Invoke-Adb shell setprop persist.wukong.bridge.enabled 0
 Invoke-Adb shell setprop ctl.stop wukong_bridge
-Invoke-Adb shell am force-stop com.shihab.diplay.hudtest
-Invoke-Adb shell am force-stop com.projection.car
 Invoke-Adb install -r -d $car
 Invoke-Adb install -r -d $phone
 Write-Host "Previous APKs restored. Application data and pairings retained."

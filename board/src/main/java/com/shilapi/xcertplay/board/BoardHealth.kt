@@ -24,6 +24,7 @@ class BoardHealth(context: Context) {
         if(state in setOf("WirelessActive","active"))activeSamples++
         val sample=JSONObject().put("elapsedMs",SystemClock.elapsedRealtime()).put("state",state)
             .put("pssKiB",memory.totalPss).put("heapBytes",heap)
+            .put("cpuTimeMs",android.os.Process.getElapsedCpuTime())
             .put("threads",File("/proc/self/task").list()?.size ?: -1)
             .put("fileDescriptors",File("/proc/self/fd").list()?.size ?: -1)
             .put("videoFrames",stats[0]).put("videoBytes",stats[1]).put("videoDecoders",stats[2])

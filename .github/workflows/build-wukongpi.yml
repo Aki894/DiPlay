@@ -24,6 +24,7 @@ jobs:
           python3 scripts/check_public_tree.py
           python3 scripts/check_generic_receiver.py
           node scripts/check-board-web.cjs
+          python3 -m py_compile scripts/collect-board-health.py
           ./gradlew :shared:testDebugUnitTest :board:testDebugUnitTest :board:lintDebug :board:assembleDebug --stacktrace
       - name: Parse Windows installers
         shell: pwsh
